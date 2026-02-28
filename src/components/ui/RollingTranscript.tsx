@@ -36,7 +36,7 @@ const RollingTranscript: React.FC<RollingTranscriptProps> = ({ text, isActive = 
                     maskImage: 'linear-gradient(to right, transparent, black 10%, black 90%, transparent)'
                 }}
             >
-                <span className="inline-flex items-center text-[13px] text-white/40 italic leading-7 transition-all duration-300">
+                <span className="inline-flex items-center text-[13px] text-text-tertiary italic leading-7 transition-all duration-300">
                     {text}
                     {isActive && (
                         <span className="inline-flex items-center ml-2">

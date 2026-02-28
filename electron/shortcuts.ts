@@ -133,6 +133,14 @@ export class ShortcutsHelper {
       }
     })
 
+    // Toggle DevTools on the focused window
+    globalShortcut.register("CommandOrControl+Shift+I", () => {
+      const focused = BrowserWindow.getFocusedWindow()
+      if (focused && !focused.isDestroyed()) {
+        focused.webContents.toggleDevTools()
+      }
+    })
+
     // Unregister shortcuts when quitting
     app.on("will-quit", () => {
       globalShortcut.unregisterAll()

@@ -7,8 +7,6 @@ mod sck;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(target_os = "macos")]
-#[cfg(target_os = "macos")]
-#[cfg(target_os = "macos")]
 pub use macos::SpeakerInput;
 #[cfg(target_os = "macos")]
 pub use macos::SpeakerStream;

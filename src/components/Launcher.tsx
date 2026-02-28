@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ToggleLeft, ToggleRight, Search, Zap, Calendar, ArrowRight, ArrowLeft, MoreHorizontal, Globe, Clock, ChevronRight, Settings, RefreshCw, Plus, Mail, Link as LinkIcon, ChevronDown, Trash2, Bell, Check, Download } from 'lucide-react';
+import { ToggleLeft, ToggleRight, Search, Zap, Calendar, ArrowRight, ArrowLeft, MoreVertical, Globe, Clock, ChevronRight, Settings, RefreshCw, Plus, Mail, Link as LinkIcon, ChevronDown, Trash2, Bell, Check, Download } from 'lucide-react';
 import { generateMeetingPDF } from '../utils/pdfGenerator';
 import icon from "./icon.png";
 import mainui from "../UI_comp/mainui.png";
@@ -66,6 +66,26 @@ const formatTime = (dateStr: string) => {
     if (dateStr === "Today") return "Just now"; // Legacy
     const date = new Date(dateStr);
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+};
+
+// Helper to format date + time (e.g. "Today, 3:14pm", "Mon, 3:14pm", "Jan 12, 3:14pm")
+const formatDateTime = (dateStr: string) => {
+    if (dateStr === "Today") return "Today";
+    const date = new Date(dateStr);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const checkDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.round((today.getTime() - checkDate.getTime()) / 86400000);
+    const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+
+    if (diffDays === 0) return `Today, ${time}`;
+    if (diffDays === 1) return `Yesterday, ${time}`;
+    if (diffDays >= 2 && diffDays <= 6) {
+        const day = date.toLocaleDateString('en-US', { weekday: 'short' });
+        return `${day}, ${time}`;
+    }
+    const short = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${short}, ${time}`;
 };
 
 const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) => {
@@ -158,7 +178,11 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
         analytics.trackCommandExecuted('start_prepared_meeting');
         try {
             const inputDeviceId = localStorage.getItem('preferredInputDeviceId');
-            const outputDeviceId = localStorage.getItem('preferredOutputDeviceId');
+            let outputDeviceId = localStorage.getItem('preferredOutputDeviceId');
+            const useSckAudio = localStorage.getItem('useSckAudioBackend') === 'true';
+            if (useSckAudio) {
+                outputDeviceId = "sck";
+            }
 
             await window.electronAPI.invoke('start-meeting', {
                 title: preparedEvent.title,
@@ -200,6 +224,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
     const [forwardMeeting, setForwardMeeting] = useState<Meeting | null>(null);
     const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
     const [menuEntered, setMenuEntered] = useState(false);
+    const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
     useEffect(() => {
         setMenuEntered(false);
@@ -242,6 +267,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
     const handleBack = () => {
         setForwardMeeting(selectedMeeting);
         setSelectedMeeting(null);
+        fetchMeetings();
     };
 
     const handleForward = () => {
@@ -251,13 +277,10 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
         }
     };
 
-    // Helper to format duration to mm:ss or mmm:ss
+    // Helper to format duration for display pill (e.g. "12m", "1h 5m", "45s")
     const formatDurationPill = (durationStr?: string) => {
-        if (!durationStr) return '00:00';
-        // Assume format "X min"
-        const minutes = parseInt(durationStr.replace('min', '').trim()) || 0;
-        const mm = minutes.toString().padStart(2, '0');
-        return `${mm}:00`;
+        if (!durationStr) return '';
+        return durationStr;
     };
 
     return (
@@ -387,7 +410,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
 
                                         </div>
 
-                                        {/* Start Smarter.li CTA Pill */}
+                                        {/* + New Conversation CTA Pill */}
                                         <button
                                             onClick={() => {
                                                 onStartMeeting();
@@ -417,7 +440,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                             <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
 
                                             <img src={icon} alt="Logo" className="w-[18px] h-[18px] object-contain brightness-0 invert drop-shadow-[0_1px_2px_rgba(0,0,0,0.1)] opacity-90" />
-                                            <span className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.1)] text-[20px] leading-none">Start Smarter.li</span>
+                                            <span className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.1)] text-[20px] leading-none">+ New Conversation</span>
                                         </button>
                                     </div>
 
@@ -584,9 +607,9 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                                             {formatDurationPill(m.duration)}
                                                                         </span>
 
-                                                                        {/* Time Text (Should fade out on hover) */}
-                                                                        <span className="text-[13px] text-text-secondary font-medium min-w-[60px] text-right transition-all duration-200 ease-out group-hover:opacity-0 group-hover:translate-x-2 delayed-hover-exit">
-                                                                            {formatTime(m.date)}
+                                                                        {/* Date & Time Text (Should fade out on hover) */}
+                                                                        <span className="text-[13px] text-text-secondary font-medium min-w-[100px] text-right transition-all duration-200 ease-out group-hover:opacity-0 group-hover:translate-x-2 delayed-hover-exit">
+                                                                            {formatDateTime(m.date)}
                                                                         </span>
                                                                     </>
                                                                 )}
@@ -601,7 +624,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                                         setActiveMenuId(activeMenuId === m.id ? null : m.id);
                                                                     }}
                                                                 >
-                                                                    <MoreHorizontal size={16} />
+                                                                    <MoreVertical size={16} />
                                                                 </button>
                                                             </div>
 
@@ -649,15 +672,9 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                                             </button>
                                                                             <button
                                                                                 className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-lg transition-colors text-left"
-                                                                                onClick={async () => {
-                                                                                    if (window.electronAPI && window.electronAPI.deleteMeeting) {
-                                                                                        const success = await window.electronAPI.deleteMeeting(m.id);
-                                                                                        if (success) {
-                                                                                            // Optimistic update or refetch
-                                                                                            setMeetings(prev => prev.filter(meeting => meeting.id !== m.id));
-                                                                                        }
-                                                                                    }
+                                                                                onClick={() => {
                                                                                     setActiveMenuId(null);
+                                                                                    setDeleteConfirmId(m.id);
                                                                                 }}
                                                                             >
                                                                                 <Trash2 size={13} />
@@ -724,6 +741,56 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                 }}
                 initialQuery={submittedGlobalQuery}
             />
+
+            {/* Delete Confirmation Modal */}
+            <AnimatePresence>
+                {deleteConfirmId && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="fixed inset-0 z-[3000] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+                        onClick={() => setDeleteConfirmId(null)}
+                    >
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            transition={{ duration: 0.15 }}
+                            className="w-[320px] glass-panel-heavy rounded-2xl p-6 shadow-2xl border border-white/10"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <h3 className="text-[15px] font-semibold text-text-primary mb-1">Delete Meeting</h3>
+                            <p className="text-[13px] text-text-secondary mb-6 leading-relaxed">
+                                This will permanently delete this meeting and its transcript. This action cannot be undone.
+                            </p>
+                            <div className="flex items-center gap-2 justify-end">
+                                <button
+                                    onClick={() => setDeleteConfirmId(null)}
+                                    className="px-4 py-1.5 text-[13px] font-medium text-text-secondary hover:text-text-primary rounded-lg hover:bg-white/10 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        if (window.electronAPI?.deleteMeeting && deleteConfirmId) {
+                                            const success = await window.electronAPI.deleteMeeting(deleteConfirmId);
+                                            if (success) {
+                                                setMeetings(prev => prev.filter(m => m.id !== deleteConfirmId));
+                                            }
+                                        }
+                                        setDeleteConfirmId(null);
+                                    }}
+                                    className="px-4 py-1.5 text-[13px] font-medium text-white bg-orange-500 hover:bg-orange-600 rounded-lg transition-colors"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div >
     );
 };

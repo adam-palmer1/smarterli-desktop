@@ -1,45 +1,31 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import {
-    Sparkles,
-    Pencil,
     MessageSquare,
     RefreshCw,
     Settings,
-    ArrowUp,
     ArrowRight,
     HelpCircle,
-    ChevronUp,
-    ChevronDown,
-
-    CornerDownLeft,
-    Mic,
-    MicOff,
     Image,
-    Camera,
     X,
-    LogOut,
     Zap,
-    Edit3,
-    SlidersHorizontal,
-    Link,
     Code,
     Copy,
-    Check,
-    MessageSquareText
+    MessageSquareText,
+    Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { dracula } from 'react-syntax-highlighter/dist/esm/styles/prism';
-// import { ModelSelector } from './ui/ModelSelector'; // REMOVED
 import TopPill from './ui/TopPill';
 import RollingTranscript from './ui/RollingTranscript';
 import PanelBar from './ui/PanelBar';
+import OverlaySettingsPopover from './OverlaySettingsPopover';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
-import { analytics, detectProviderType } from '../lib/analytics/analytics.service';
+import { analytics } from '../lib/analytics/analytics.service';
 
 interface Message {
     id: string;
@@ -57,12 +43,14 @@ interface SmarterliInterfaceProps {
 }
 
 const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting }) => {
-    const [isExpanded, setIsExpanded] = useState(true);
     const [inputValue, setInputValue] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
     const [isConnected, setIsConnected] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isMeetingPaused, setIsMeetingPaused] = useState(false);
+    const [isOverlaySettingsOpen, setIsOverlaySettingsOpen] = useState(false);
+    const [showStopConfirm, setShowStopConfirm] = useState(false);
     const [conversationContext, setConversationContext] = useState<string>('');
     const [isManualRecording, setIsManualRecording] = useState(false);
     const isRecordingRef = useRef(false);  // Ref to track recording state (avoids stale closure)
@@ -110,67 +98,34 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
         return stored ? stored === 'true' : true;
     });
 
-    // Model Selection State
-    const [currentModel, setCurrentModel] = useState<string>('gemini-3-flash-preview');
-
-    useEffect(() => {
-        // Load the persisted default model (not the runtime model)
-        // Each new meeting starts with the default from settings
-        if (window.electronAPI?.invoke) {
-            window.electronAPI.invoke('get-default-model')
-                .then((result: any) => {
-                    if (result && result.model) {
-                        setCurrentModel(result.model);
-                        // Also set the runtime model to the default
-                        window.electronAPI.invoke('set-model', result.model).catch(() => { });
-                    }
-                })
-                .catch((err: any) => console.error("Failed to fetch default model:", err));
-        }
-    }, []);
-
-    const handleModelSelect = (modelId: string) => {
-        setCurrentModel(modelId);
-        // Session-only: update runtime but don't persist as default
-        window.electronAPI.invoke('set-model', modelId)
-            .catch((err: any) => console.error("Failed to set model:", err));
-    };
-
-    // Listen for default model changes from Settings
-    useEffect(() => {
-        if (!window.electronAPI?.onModelChanged) return;
-        const unsubscribe = window.electronAPI.onModelChanged((modelId: string) => {
-            setCurrentModel(prev => prev === modelId ? prev : modelId);
-        });
-        return () => unsubscribe();
-    }, []);
-
     // Persist Settings
     useEffect(() => {
         localStorage.setItem('smarterli_hideChatHidesWidget', String(hideChatHidesWidget));
     }, [hideChatHidesWidget]);
 
-    // Auto-resize Window
+    // Auto-resize Window (debounced to avoid excessive IPC during animations)
     useLayoutEffect(() => {
         if (!contentRef.current) return;
 
+        let resizeTimer: ReturnType<typeof setTimeout> | null = null;
         const observer = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                // Use getBoundingClientRect to get the exact rendered size including padding
                 const rect = entry.target.getBoundingClientRect();
+                const width = Math.ceil(rect.width);
+                const height = Math.ceil(rect.height);
 
-                // Send exact dimensions to Electron
-                // Removed buffer to ensure tight fit
-                console.log('[SmarterliInterface] ResizeObserver:', Math.ceil(rect.width), Math.ceil(rect.height));
-                window.electronAPI?.updateContentDimensions({
-                    width: Math.ceil(rect.width),
-                    height: Math.ceil(rect.height)
-                });
+                if (resizeTimer) clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    window.electronAPI?.updateContentDimensions({ width, height });
+                }, 50);
             }
         });
 
         observer.observe(contentRef.current);
-        return () => observer.disconnect();
+        return () => {
+            observer.disconnect();
+            if (resizeTimer) clearTimeout(resizeTimer);
+        };
     }, []);
 
     // Force initial sizing safety check
@@ -189,10 +144,8 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
 
     // Auto-scroll
     useEffect(() => {
-        if (isExpanded) {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        }
-    }, [messages, isExpanded, isProcessing]);
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages, isProcessing]);
 
     // Build conversation context from messages
     useEffect(() => {
@@ -213,26 +166,6 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
         return () => unsubscribe();
     }, []);
 
-    // Sync Window Visibility with Expanded State
-    useEffect(() => {
-        if (isExpanded) {
-            window.electronAPI.showWindow();
-        } else {
-            // Slight delay to allow animation to clean up if needed, though immediate is safer for click-through
-            // Using setTimeout to ensure the render cycle completes first
-            // Increased to 400ms to allow "contract to bottom" exit animation to finish
-            setTimeout(() => window.electronAPI.hideWindow(), 400);
-        }
-    }, [isExpanded]);
-
-    // Keyboard shortcut to toggle expanded state (via Main Process)
-    useEffect(() => {
-        if (!window.electronAPI?.onToggleExpand) return;
-        const unsubscribe = window.electronAPI.onToggleExpand(() => {
-            setIsExpanded(prev => !prev);
-        });
-        return () => unsubscribe();
-    }, []);
 
     // Session Reset Listener - Clears UI when a NEW meeting starts
     useEffect(() => {
@@ -245,6 +178,8 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
             setManualTranscript('');
             setVoiceInput('');
             setIsProcessing(false);
+            setIsMeetingPaused(false);
+            setIsOverlaySettingsOpen(false);
             // Optionally reset connection status if needed, but connection persists
 
             // Track new conversation/session if applicable?
@@ -254,6 +189,28 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
         });
         return () => unsubscribe();
     }, []);
+
+    // Meeting Pause/Resume Listeners
+    useEffect(() => {
+        if (!window.electronAPI?.onMeetingPaused) return;
+        const cleanups: (() => void)[] = [];
+        cleanups.push(window.electronAPI.onMeetingPaused(() => {
+            setIsMeetingPaused(true);
+        }));
+        cleanups.push(window.electronAPI.onMeetingResumed(() => {
+            setIsMeetingPaused(false);
+        }));
+        return () => cleanups.forEach(fn => fn());
+    }, []);
+
+    // Pause/Resume handler
+    const handlePauseToggle = async () => {
+        if (isMeetingPaused) {
+            await window.electronAPI.resumeMeeting();
+        } else {
+            await window.electronAPI.pauseMeeting();
+        }
+    };
 
     // Load panel configs and active panels on mount
     useEffect(() => {
@@ -347,15 +304,12 @@ ${instruction}`,
         // Connection Status
         window.electronAPI.getNativeAudioStatus().then((status) => {
             setIsConnected(status.connected);
-            setIsConnected(status.connected);
         }).catch(() => setIsConnected(false));
 
         cleanups.push(window.electronAPI.onNativeAudioConnected(() => {
             setIsConnected(true);
-            setIsConnected(true);
         }));
         cleanups.push(window.electronAPI.onNativeAudioDisconnected(() => {
-            setIsConnected(false);
             setIsConnected(false);
         }));
 
@@ -385,19 +339,19 @@ ${instruction}`,
                 return;  // Skip user mic input - only relevant when Answer button is active
             }
 
-            // Only show interviewer (system audio) transcripts in rolling bar
-            if (transcript.speaker !== 'interviewer') {
-                return;  // Safety check for any other speaker types
-            }
+            // Show all non-user transcripts (interviewer + diarized speakers) in rolling bar
+            // speaker can be 'interviewer', 'speaker_0', 'speaker_SPEAKER_00', etc.
 
             // Route to rolling transcript bar - accumulate text continuously
             setIsInterviewerSpeaking(!transcript.final);
+
+            const namePrefix = transcript.person_name ? `${transcript.person_name}: ` : '';
 
             if (transcript.final) {
                 // Append finalized text to accumulated transcript
                 setRollingTranscript(prev => {
                     const separator = prev ? '  ·  ' : '';
-                    return prev + separator + transcript.text;
+                    return prev + separator + namePrefix + transcript.text;
                 });
 
                 // Clear speaking indicator after pause
@@ -410,7 +364,7 @@ ${instruction}`,
                     // Find where previous finalized content ends (look for last separator)
                     const lastSeparator = prev.lastIndexOf('  ·  ');
                     const accumulated = lastSeparator >= 0 ? prev.substring(0, lastSeparator + 5) : '';
-                    return accumulated + transcript.text;
+                    return accumulated + namePrefix + transcript.text;
                 });
             }
         }));
@@ -418,7 +372,6 @@ ${instruction}`,
         // AI Suggestions from native audio (legacy)
         cleanups.push(window.electronAPI.onSuggestionProcessingStart(() => {
             setIsProcessing(true);
-            setIsExpanded(true);
         }));
 
         cleanups.push(window.electronAPI.onSuggestionGenerated((data) => {
@@ -662,7 +615,6 @@ ${instruction}`,
 
         // Screenshot taken - auto-analyze
         cleanups.push(window.electronAPI.onScreenshotTaken(async (data) => {
-            setIsExpanded(true);
             setIsProcessing(true);
             analytics.trackCommandExecuted('screenshot_analysis');
 
@@ -703,14 +655,13 @@ ${instruction}`,
         // Selective Screenshot (Latent Context)
         if (window.electronAPI.onScreenshotAttached) {
             cleanups.push(window.electronAPI.onScreenshotAttached((data) => {
-                setIsExpanded(true);
                 setAttachedContext(data);
                 // toast/notification could go here
             }));
         }
 
         return () => cleanups.forEach(fn => fn());
-    }, [isExpanded]);
+    }, []);
 
     // Quick Actions - Updated to use new Intelligence APIs
 
@@ -721,7 +672,6 @@ ${instruction}`,
     };
 
     const handleWhatToSay = async () => {
-        setIsExpanded(true);
         setIsProcessing(true);
         analytics.trackCommandExecuted('what_to_say');
 
@@ -741,7 +691,7 @@ ${instruction}`,
 
         try {
             // Pass imagePath if attached
-            await window.electronAPI.generateWhatToSay(undefined, currentAttachment?.path);
+            await window.electronAPI.generateWhatToSay(currentAttachment?.path);
         } catch (err) {
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
@@ -754,7 +704,6 @@ ${instruction}`,
     };
 
     const handleFollowUp = async (intent: string = 'rephrase') => {
-        setIsExpanded(true);
         setIsProcessing(true);
         analytics.trackCommandExecuted('follow_up_' + intent);
 
@@ -772,7 +721,6 @@ ${instruction}`,
     };
 
     const handleRecap = async () => {
-        setIsExpanded(true);
         setIsProcessing(true);
         analytics.trackCommandExecuted('recap');
 
@@ -790,7 +738,6 @@ ${instruction}`,
     };
 
     const handleFollowUpQuestions = async () => {
-        setIsExpanded(true);
         setIsProcessing(true);
         analytics.trackCommandExecuted('suggest_questions');
 
@@ -845,8 +792,8 @@ ${instruction}`,
 
             // Track Usage
             analytics.trackModelUsed({
-                model_name: currentModel,
-                provider_type: detectProviderType(currentModel),
+                model_name: 'server',
+                provider_type: 'cloud',
                 latency_ms: latency
             });
 
@@ -892,7 +839,7 @@ ${instruction}`,
         }));
 
         return () => cleanups.forEach(fn => fn());
-    }, [currentModel]); // Ensure tracking captures correct model
+    }, []);
 
     // MODE 5: Manual Answer - Toggle recording for voice-to-answer
     const handleAnswerNow = async () => {
@@ -1033,7 +980,6 @@ Provide only the answer, nothing else.`;
             isStreaming: true
         }]);
 
-        setIsExpanded(true);
         setIsProcessing(true);
 
         try {
@@ -1072,19 +1018,19 @@ Provide only the answer, nothing else.`;
 
 
 
-    const renderMessageText = (msg: Message) => {
+    const renderMessageText = useCallback((msg: Message) => {
         // Code-containing messages get special styling
         // We split by code blocks to keep the "Code Solution" UI intact for the code parts
         // But use ReactMarkdown for the text parts around it
         if (msg.isCode || (msg.role === 'system' && msg.text.includes('```'))) {
             const parts = msg.text.split(/(```[\s\S]*?```)/g);
             return (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1">
-                    <div className="flex items-center gap-2 mb-2 text-purple-300 font-semibold text-xs uppercase tracking-wide">
+                <div className="bg-glass-bg-light border border-glass-border rounded-lg p-3 my-1">
+                    <div className="flex items-center gap-2 mb-2 text-accent-primary font-semibold text-xs uppercase tracking-wide">
                         <Code className="w-3.5 h-3.5" />
                         <span>Code Solution</span>
                     </div>
-                    <div className="space-y-2 text-slate-200 text-[13px] leading-relaxed">
+                    <div className="space-y-2 text-text-primary text-[13px] leading-relaxed">
                         {parts.map((part, i) => {
                             if (part.startsWith('```')) {
                                 const match = part.match(/```(\w+)?\n?([\s\S]*?)```/);
@@ -1092,11 +1038,11 @@ Provide only the answer, nothing else.`;
                                     const lang = match[1] || 'python';
                                     const code = match[2].trim();
                                     return (
-                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-white/10 shadow-sm bg-[#0D0D0D]">
+                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-glass-border shadow-sm bg-bg-primary">
                                             {/* IDE-style Header */}
-                                            <div className="bg-[#1A1A1A] px-3 py-1.5 flex items-center justify-between border-b border-white/5">
-                                                <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-slate-400 font-mono">
-                                                    <div className="w-2 h-2 rounded-full bg-purple-500/80" />
+                                            <div className="bg-bg-elevated px-3 py-1.5 flex items-center justify-between border-b border-border-subtle">
+                                                <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-text-secondary font-mono">
+                                                    <div className="w-2 h-2 rounded-full bg-accent-primary/80" />
                                                     {lang || 'CODE'}
                                                 </div>
                                                 <div className="flex gap-1.5">
@@ -1133,17 +1079,17 @@ Provide only the answer, nothing else.`;
                                         rehypePlugins={[rehypeKatex]}
                                         components={{
                                             p: ({ node, ...props }: any) => <p className="mb-2 last:mb-0" {...props} />,
-                                            strong: ({ node, ...props }: any) => <strong className="font-bold text-white" {...props} />,
-                                            em: ({ node, ...props }: any) => <em className="italic text-slate-300" {...props} />,
+                                            strong: ({ node, ...props }: any) => <strong className="font-bold text-text-primary" {...props} />,
+                                            em: ({ node, ...props }: any) => <em className="italic text-text-secondary" {...props} />,
                                             ul: ({ node, ...props }: any) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
                                             ol: ({ node, ...props }: any) => <ol className="list-decimal ml-4 mb-2 space-y-1" {...props} />,
                                             li: ({ node, ...props }: any) => <li className="pl-1" {...props} />,
-                                            h1: ({ node, ...props }: any) => <h1 className="text-lg font-bold text-white mb-2 mt-3" {...props} />,
-                                            h2: ({ node, ...props }: any) => <h2 className="text-base font-bold text-white mb-2 mt-3" {...props} />,
-                                            h3: ({ node, ...props }: any) => <h3 className="text-sm font-bold text-white mb-1 mt-2" {...props} />,
-                                            code: ({ node, ...props }: any) => <code className="bg-slate-700/50 rounded px-1 py-0.5 text-xs font-mono text-purple-200" {...props} />,
-                                            blockquote: ({ node, ...props }: any) => <blockquote className="border-l-2 border-purple-500/50 pl-3 italic text-slate-400 my-2" {...props} />,
-                                            a: ({ node, ...props }: any) => <a className="text-orange-400 hover:text-orange-300 hover:underline" target="_blank" rel="noopener noreferrer" {...props} />,
+                                            h1: ({ node, ...props }: any) => <h1 className="text-lg font-bold text-text-primary mb-2 mt-3" {...props} />,
+                                            h2: ({ node, ...props }: any) => <h2 className="text-base font-bold text-text-primary mb-2 mt-3" {...props} />,
+                                            h3: ({ node, ...props }: any) => <h3 className="text-sm font-bold text-text-primary mb-1 mt-2" {...props} />,
+                                            code: ({ node, ...props }: any) => <code className="bg-bg-elevated rounded px-1 py-0.5 text-xs font-mono text-accent-primary" {...props} />,
+                                            blockquote: ({ node, ...props }: any) => <blockquote className="border-l-2 border-accent-primary/50 pl-3 italic text-text-tertiary my-2" {...props} />,
+                                            a: ({ node, ...props }: any) => <a className="text-accent-primary hover:opacity-80 hover:underline" target="_blank" rel="noopener noreferrer" {...props} />,
                                         }}
                                     >
                                         {part}
@@ -1159,15 +1105,15 @@ Provide only the answer, nothing else.`;
         // Custom Styled Labels (Shorten, Recap, Follow-up) - also use Markdown for content
         if (msg.intent === 'shorten') {
             return (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1">
-                    <div className="flex items-center gap-2 mb-2 text-cyan-300 font-semibold text-xs uppercase tracking-wide">
+                <div className="bg-glass-bg-light border border-glass-border rounded-lg p-3 my-1">
+                    <div className="flex items-center gap-2 mb-2 text-accent-primary font-semibold text-xs uppercase tracking-wide">
                         <MessageSquare className="w-3.5 h-3.5" />
                         <span>Shortened</span>
                     </div>
-                    <div className="text-slate-200 text-[13px] leading-relaxed markdown-content">
+                    <div className="text-text-primary text-[13px] leading-relaxed markdown-content">
                         <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{
                             p: ({ node, ...props }: any) => <p className="mb-2 last:mb-0" {...props} />,
-                            strong: ({ node, ...props }: any) => <strong className="font-bold text-cyan-100" {...props} />,
+                            strong: ({ node, ...props }: any) => <strong className="font-bold text-text-primary" {...props} />,
                             ul: ({ node, ...props }: any) => <ul className="list-disc ml-4 mb-2" {...props} />,
                             li: ({ node, ...props }: any) => <li className="pl-1" {...props} />,
                         }}>
@@ -1180,15 +1126,15 @@ Provide only the answer, nothing else.`;
 
         if (msg.intent === 'recap') {
             return (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1">
-                    <div className="flex items-center gap-2 mb-2 text-indigo-300 font-semibold text-xs uppercase tracking-wide">
+                <div className="bg-glass-bg-light border border-glass-border rounded-lg p-3 my-1">
+                    <div className="flex items-center gap-2 mb-2 text-accent-primary font-semibold text-xs uppercase tracking-wide">
                         <RefreshCw className="w-3.5 h-3.5" />
                         <span>Recap</span>
                     </div>
-                    <div className="text-slate-200 text-[13px] leading-relaxed markdown-content">
+                    <div className="text-text-primary text-[13px] leading-relaxed markdown-content">
                         <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{
                             p: ({ node, ...props }: any) => <p className="mb-2 last:mb-0" {...props} />,
-                            strong: ({ node, ...props }: any) => <strong className="font-bold text-indigo-100" {...props} />,
+                            strong: ({ node, ...props }: any) => <strong className="font-bold text-text-primary" {...props} />,
                             ul: ({ node, ...props }: any) => <ul className="list-disc ml-4 mb-2" {...props} />,
                             li: ({ node, ...props }: any) => <li className="pl-1" {...props} />,
                         }}>
@@ -1201,15 +1147,15 @@ Provide only the answer, nothing else.`;
 
         if (msg.intent === 'follow_up_questions') {
             return (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1">
-                    <div className="flex items-center gap-2 mb-2 text-[#FFD60A] font-semibold text-xs uppercase tracking-wide">
+                <div className="bg-glass-bg-light border border-glass-border rounded-lg p-3 my-1">
+                    <div className="flex items-center gap-2 mb-2 text-accent-primary font-semibold text-xs uppercase tracking-wide">
                         <HelpCircle className="w-3.5 h-3.5" />
                         <span>Follow-Up Questions</span>
                     </div>
-                    <div className="text-slate-200 text-[13px] leading-relaxed markdown-content">
+                    <div className="text-text-primary text-[13px] leading-relaxed markdown-content">
                         <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{
                             p: ({ node, ...props }: any) => <p className="mb-2 last:mb-0" {...props} />,
-                            strong: ({ node, ...props }: any) => <strong className="font-bold text-[#FFF9C4]" {...props} />,
+                            strong: ({ node, ...props }: any) => <strong className="font-bold text-text-primary" {...props} />,
                             ul: ({ node, ...props }: any) => <ul className="list-disc ml-4 mb-2" {...props} />,
                             li: ({ node, ...props }: any) => <li className="pl-1" {...props} />,
                         }}>
@@ -1225,11 +1171,11 @@ Provide only the answer, nothing else.`;
             const parts = msg.text.split(/(```[\s\S]*?(?:```|$))/g);
 
             return (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1">
-                    <div className="flex items-center gap-2 mb-2 text-emerald-400 font-semibold text-xs uppercase tracking-wide">
+                <div className="bg-glass-bg-light border border-glass-border rounded-lg p-3 my-1">
+                    <div className="flex items-center gap-2 mb-2 text-accent-primary font-semibold text-xs uppercase tracking-wide">
                         <span>Say this</span>
                     </div>
-                    <div className="text-slate-100 text-[14px] leading-relaxed">
+                    <div className="text-text-primary text-[14px] leading-relaxed">
                         {parts.map((part, i) => {
                             if (part.startsWith('```')) {
                                 // Robust matching: handles unclosed blocks for streaming (```...$)
@@ -1248,11 +1194,11 @@ Provide only the answer, nothing else.`;
                                     }
 
                                     return (
-                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-white/10 shadow-sm bg-[#0D0D0D]">
+                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-glass-border shadow-sm bg-bg-primary">
                                             {/* IDE-style Header */}
-                                            <div className="bg-[#1A1A1A] px-3 py-1.5 flex items-center justify-between border-b border-white/5">
-                                                <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-slate-400 font-mono">
-                                                    <div className="w-2 h-2 rounded-full bg-emerald-500/80" />
+                                            <div className="bg-bg-elevated px-3 py-1.5 flex items-center justify-between border-b border-border-subtle">
+                                                <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-text-secondary font-mono">
+                                                    <div className="w-2 h-2 rounded-full bg-accent-primary/80" />
                                                     {lang || 'CODE'}
                                                 </div>
                                                 <div className="flex gap-1.5">
@@ -1290,8 +1236,8 @@ Provide only the answer, nothing else.`;
                                         rehypePlugins={[rehypeKatex]}
                                         components={{
                                             p: ({ node, ...props }: any) => <p className="mb-2 last:mb-0" {...props} />,
-                                            strong: ({ node, ...props }: any) => <strong className="font-bold text-emerald-100" {...props} />,
-                                            em: ({ node, ...props }: any) => <em className="italic text-emerald-200/80" {...props} />,
+                                            strong: ({ node, ...props }: any) => <strong className="font-bold text-text-primary" {...props} />,
+                                            em: ({ node, ...props }: any) => <em className="italic text-text-secondary" {...props} />,
                                             ul: ({ node, ...props }: any) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
                                             ol: ({ node, ...props }: any) => <ol className="list-decimal ml-4 mb-2 space-y-1" {...props} />,
                                             li: ({ node, ...props }: any) => <li className="pl-1" {...props} />,
@@ -1329,30 +1275,20 @@ Provide only the answer, nothing else.`;
                 </ReactMarkdown>
             </div>
         );
-    };
+    }, []);
 
     return (
-        <div ref={contentRef} className="flex flex-col items-center w-fit mx-auto h-fit min-h-0 bg-transparent p-0 rounded-[24px] font-sans text-slate-200 gap-2 drag-region">
+        <div ref={contentRef} className="flex flex-col items-center w-fit mx-auto h-fit min-h-0 bg-transparent p-0 rounded-[24px] font-sans text-text-primary gap-2 drag-region">
 
-            <AnimatePresence>
-                {isExpanded && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 20, scale: 0.95 }}
-                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                        className="flex flex-col items-center gap-2 w-full"
-                    >
-                        <TopPill
-                            expanded={isExpanded}
-                            onToggle={() => setIsExpanded(!isExpanded)}
-                            onQuit={() => onEndMeeting ? onEndMeeting() : window.electronAPI.quitApp()}
-                        />
+            <div className="flex flex-col items-center gap-2 w-full">
+                <TopPill
+                    onQuit={() => setShowStopConfirm(true)}
+                    isPaused={isMeetingPaused}
+                    onPauseToggle={handlePauseToggle}
+                />
                         <div className="
                     relative w-[600px] max-w-full
-                    bg-[#111111]/85
-                    backdrop-blur-[60px] saturate-[200%]
-                    border border-glass-border
+                    glass-panel-heavy
                     shadow-2xl shadow-black/40
                     rounded-[24px]
                     overflow-hidden
@@ -1361,6 +1297,34 @@ Provide only the answer, nothing else.`;
 
 
 
+
+                            {/* Paused Banner */}
+                            {isMeetingPaused && (
+                                <div className="flex items-center justify-between px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 no-drag">
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                                        <span className="text-[12px] font-medium text-amber-300">Meeting Paused</span>
+                                    </div>
+                                    <button
+                                        onClick={handlePauseToggle}
+                                        className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition-colors interaction-base interaction-press"
+                                    >
+                                        <Play className="w-3 h-3" />
+                                        Resume
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Overlay Settings Popover */}
+                            <AnimatePresence>
+                                {isOverlaySettingsOpen && (
+                                    <OverlaySettingsPopover
+                                        isOpen={isOverlaySettingsOpen}
+                                        onClose={() => setIsOverlaySettingsOpen(false)}
+                                        isPaused={isMeetingPaused}
+                                    />
+                                )}
+                            </AnimatePresence>
 
                             {/* Rolling Transcript Bar - Single-line interviewer speech */}
                             {(rollingTranscript || isInterviewerSpeaking) && showTranscript && (
@@ -1378,15 +1342,15 @@ Provide only the answer, nothing else.`;
                                             <div className={`
                       ${msg.role === 'user' ? 'max-w-[72.25%] px-[13.6px] py-[10.2px]' : 'max-w-[85%] px-4 py-3'} text-[14px] leading-relaxed relative group whitespace-pre-wrap
                       ${msg.role === 'user'
-                                                    ? 'bg-orange-600/20 backdrop-blur-md border border-orange-500/30 text-orange-100 rounded-[20px] rounded-tr-[4px] shadow-sm font-medium'
+                                                    ? 'bg-accent-secondary backdrop-blur-md border border-accent-primary/30 text-text-primary rounded-[20px] rounded-tr-[4px] shadow-sm font-medium'
                                                     : ''
                                                 }
                       ${msg.role === 'system'
-                                                    ? 'text-slate-200 font-normal'
+                                                    ? 'text-text-primary font-normal'
                                                     : ''
                                                 }
                       ${msg.role === 'interviewer'
-                                                    ? 'text-white/40 italic pl-0 text-[13px]'
+                                                    ? 'text-text-tertiary italic pl-0 text-[13px]'
                                                     : ''
                                                 }
                     `}>
@@ -1439,9 +1403,9 @@ Provide only the answer, nothing else.`;
                                     {isProcessing && (
                                         <div className="flex justify-start">
                                             <div className="px-3 py-2 flex gap-1.5">
-                                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                <div className="w-2 h-2 bg-accent-primary/60 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                <div className="w-2 h-2 bg-accent-primary/60 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                <div className="w-2 h-2 bg-accent-primary/60 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                                             </div>
                                         </div>
                                     )}
@@ -1462,20 +1426,20 @@ Provide only the answer, nothing else.`;
 
                             {/* Quick Actions - Minimal & Clean */}
                             <div className={`flex flex-nowrap justify-center items-center gap-1.5 px-4 pb-3 overflow-x-hidden ${rollingTranscript && showTranscript ? 'pt-1' : 'pt-3'}`}>
-                                <button onClick={() => handleFollowUp('shorten')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-slate-400 bg-white/5 border border-white/0 hover:text-slate-200 hover:bg-accent-primary/10 hover:border-accent-primary/10 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
+                                <button onClick={() => handleFollowUp('shorten')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-text-secondary bg-glass-bg-light border border-transparent hover:text-text-primary hover:bg-accent-primary/10 hover:border-accent-primary/10 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
                                     <MessageSquare className="w-3 h-3 opacity-70" /> Shorten
                                 </button>
-                                <button onClick={handleRecap} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-slate-400 bg-white/5 border border-white/0 hover:text-slate-200 hover:bg-accent-primary/10 hover:border-accent-primary/10 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
+                                <button onClick={handleRecap} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-text-secondary bg-glass-bg-light border border-transparent hover:text-text-primary hover:bg-accent-primary/10 hover:border-accent-primary/10 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
                                     <RefreshCw className="w-3 h-3 opacity-70" /> Recap
                                 </button>
-                                <button onClick={handleFollowUpQuestions} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-slate-400 bg-white/5 border border-white/0 hover:text-slate-200 hover:bg-accent-primary/10 hover:border-accent-primary/10 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
+                                <button onClick={handleFollowUpQuestions} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-text-secondary bg-glass-bg-light border border-transparent hover:text-text-primary hover:bg-accent-primary/10 hover:border-accent-primary/10 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
                                     <HelpCircle className="w-3 h-3 opacity-70" /> Follow Up Question
                                 </button>
                                 <button
                                     onClick={handleAnswerNow}
                                     className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium transition-all active:scale-95 duration-200 interaction-base interaction-press min-w-[74px] whitespace-nowrap shrink-0 ${isManualRecording
                                         ? 'bg-red-500/10 text-red-400 ring-1 ring-red-500/20'
-                                        : 'bg-white/5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10'
+                                        : 'bg-glass-bg-light text-text-secondary hover:text-emerald-400 hover:bg-emerald-500/10'
                                         }`}
                                 >
                                     {isManualRecording ? (
@@ -1493,7 +1457,7 @@ Provide only the answer, nothing else.`;
                             <div className="p-3 pt-0">
                                 {/* Latent Context Preview (Attached Screenshot) */}
                                 {attachedContext && (
-                                    <div className="mb-2 flex items-center justify-between bg-white/5 border border-white/10 rounded-lg p-2 animate-in fade-in slide-in-from-bottom-1">
+                                    <div className="mb-2 flex items-center justify-between bg-glass-bg-light border border-glass-border rounded-lg p-2 animate-in fade-in slide-in-from-bottom-1">
                                         <div className="flex items-center gap-3">
                                             <div className="relative group">
                                                 <img
@@ -1504,13 +1468,13 @@ Provide only the answer, nothing else.`;
                                                 <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors rounded" />
                                             </div>
                                             <div className="flex flex-col">
-                                                <span className="text-[11px] font-medium text-white">Screenshot attached</span>
-                                                <span className="text-[10px] text-slate-400">Ask a question or click Answer</span>
+                                                <span className="text-[11px] font-medium text-text-primary">Screenshot attached</span>
+                                                <span className="text-[10px] text-text-tertiary">Ask a question or click Answer</span>
                                             </div>
                                         </div>
                                         <button
                                             onClick={() => setAttachedContext(null)}
-                                            className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"
+                                            className="p-1 hover:bg-glass-bg-light rounded-full text-text-tertiary hover:text-text-primary transition-colors"
                                         >
                                             <X className="w-3.5 h-3.5" />
                                         </button>
@@ -1527,25 +1491,25 @@ Provide only the answer, nothing else.`;
 
                                         className="
                                     w-full
-                                    bg-white/5
-                                    hover:bg-white/[0.07]
-                                    focus:bg-white/5
-                                    border border-white/5
-                                    focus:border-accent-primary/30
+                                    bg-bg-input
+                                    hover:bg-bg-input
+                                    focus:bg-bg-input
+                                    border border-border-subtle
+                                    focus:border-accent-primary/40
                                     focus:ring-1 focus:ring-accent-primary/20
-                                    rounded-xl 
-                                    pl-3 pr-10 py-2.5 
-                                    text-slate-200 
-                                    focus:outline-none 
+                                    rounded-xl
+                                    pl-3 pr-10 py-2.5
+                                    text-text-primary
+                                    focus:outline-none
                                     transition-all duration-200 ease-sculpted
                                     text-[13px] leading-relaxed
-                                    placeholder:text-slate-500
+                                    placeholder:text-text-tertiary
                                 "
                                     />
 
                                     {/* Custom Rich Placeholder */}
                                     {!inputValue && (
-                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none text-[13px] text-slate-400">
+                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none text-[13px] text-text-tertiary">
                                             <span>Ask anything on screen or conversation, or</span>
                                             <div className="flex items-center gap-1 opacity-80">
                                                 <kbd className="px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[10px] font-sans">⌘</kbd>
@@ -1566,111 +1530,125 @@ Provide only the answer, nothing else.`;
                                 {/* Bottom Row */}
                                 <div className="flex items-center justify-between mt-3 px-0.5">
                                     <div className="flex items-center gap-1.5">
-                                        <button
-                                            onClick={(e) => {
-                                                // Calculate position for detached window
-                                                if (!contentRef.current) return;
-                                                const contentRect = contentRef.current.getBoundingClientRect();
-                                                const buttonRect = e.currentTarget.getBoundingClientRect();
-                                                const GAP = 8;
-
-                                                const x = window.screenX + buttonRect.left;
-                                                const y = window.screenY + contentRect.bottom + GAP;
-
-                                                window.electronAPI.invoke('toggle-model-selector', { x, y });
-                                            }}
-                                            className={`
-                                                flex items-center gap-2 px-3 py-1.5 
-                                                border border-white/10 rounded-lg transition-colors 
-                                                text-xs font-medium w-[140px]
-                                                interaction-base interaction-press
-                                                bg-black/20 text-white/70 hover:bg-white/5 hover:text-white
-                                            `}
-                                        >
-                                            <span className="truncate min-w-0 flex-1">
-                                                {(() => {
-                                                    const m = currentModel;
-                                                    if (m.startsWith('ollama-')) return m.replace('ollama-', '');
-                                                    if (m === 'gemini-3-flash-preview') return 'Gemini 3 Flash';
-                                                    if (m === 'gemini-3-pro-preview') return 'Gemini 3 Pro';
-                                                    if (m === 'llama-3.3-70b-versatile') return 'Groq Llama 3.3';
-                                                    if (m === 'gpt-5.2-chat-latest') return 'GPT 5.2';
-                                                    if (m === 'claude-sonnet-4-5') return 'Sonnet 4.5';
-                                                    return m;
-                                                })()}
-                                            </span>
-                                            <ChevronDown size={14} className="shrink-0 transition-transform" />
-                                        </button>
-
-                                        <div className="w-px h-3 bg-white/10 mx-1" />
-
                                         {/* Live Transcript */}
                                         <button
                                             onClick={() => window.electronAPI.toggleTranscriptPanel()}
-                                            className="w-7 h-7 flex items-center justify-center rounded-lg interaction-base interaction-press text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                                            className="w-7 h-7 flex items-center justify-center rounded-lg interaction-base interaction-press text-text-tertiary hover:text-text-secondary hover:bg-glass-bg-light"
                                             title="Live Transcript"
                                         >
                                             <MessageSquareText className="w-3.5 h-3.5" />
                                         </button>
 
-                                        <div className="w-px h-3 bg-white/10 mx-1" />
+                                        <div className="w-px h-3 bg-white/10" />
 
-                                        {/* Settings Gear */}
-                                        <div className="relative">
-                                            <button
-                                                onClick={(e) => {
-                                                    if (isSettingsOpen) {
-                                                        // If open, just close it (toggle will handle logic but we can be explicit or just toggle)
-                                                        // Actually toggle-settings-window handles hiding if visible, so logic is same.
-                                                        window.electronAPI.invoke('toggle-settings-window');
-                                                        return;
-                                                    }
-
-                                                    if (!contentRef.current) return;
-
-                                                    const contentRect = contentRef.current.getBoundingClientRect();
-                                                    const buttonRect = e.currentTarget.getBoundingClientRect();
-                                                    const POPUP_WIDTH = 270; // Matches SettingsWindowHelper actual width
-                                                    const GAP = 8; // Same gap as between TopPill and main body (gap-2 = 8px)
-
-                                                    // X: Left-aligned relative to the Settings Button
-                                                    const x = window.screenX + buttonRect.left;
-
-                                                    // Y: Below the main content + gap
-                                                    const y = window.screenY + contentRect.bottom + GAP;
-
-                                                    window.electronAPI.invoke('toggle-settings-window', { x, y });
-                                                }}
-                                                className={`
-                                            w-7 h-7 flex items-center justify-center rounded-lg 
-                                            interaction-base interaction-press
-                                            ${isSettingsOpen ? 'text-white bg-white/10' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}
-                                        `}
-                                                title="Settings"
-                                            >
-                                                <SlidersHorizontal className="w-3.5 h-3.5" />
-                                            </button>
-                                        </div>
-
+                                        {/* Live Feedback */}
+                                        <button
+                                            onClick={() => window.electronAPI.toggleLiveFeedback()}
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg interaction-base interaction-press text-[11px] font-medium text-[#E8750A]/70 hover:text-[#E8750A] hover:bg-[#E8750A]/8 transition-colors"
+                                            title="Live Feedback"
+                                        >
+                                            <Zap className="w-3 h-3" />
+                                            <span>Feedback</span>
+                                        </button>
                                     </div>
 
-                                    <button
-                                        onClick={handleManualSubmit}
-                                        disabled={!inputValue.trim()}
-                                        className={`
-                                    w-7 h-7 rounded-full flex items-center justify-center 
-                                    interaction-base interaction-press
-                                    ${inputValue.trim()
-                                                ? 'bg-accent-primary text-white shadow-lg shadow-orange-500/20 hover:bg-orange-600'
-                                                : 'bg-white/5 text-white/10 cursor-not-allowed'
-                                            }
-                                `}
-                                    >
-                                        <ArrowRight className="w-3.5 h-3.5" />
-                                    </button>
+                                    <div className="flex items-center gap-1.5">
+                                        {/* Settings Cog — opens inline overlay settings */}
+                                        <button
+                                            onClick={() => setIsOverlaySettingsOpen(prev => !prev)}
+                                            className={`
+                                                w-7 h-7 flex items-center justify-center rounded-lg
+                                                interaction-base interaction-press
+                                                ${isOverlaySettingsOpen ? 'text-text-primary bg-glass-bg-light' : 'text-text-tertiary hover:text-text-secondary hover:bg-glass-bg-light'}
+                                            `}
+                                            title="Audio Settings"
+                                        >
+                                            <Settings className="w-3.5 h-3.5" />
+                                        </button>
+
+                                        <button
+                                            onClick={handleManualSubmit}
+                                            disabled={!inputValue.trim()}
+                                            className={`
+                                                w-7 h-7 rounded-full flex items-center justify-center
+                                                interaction-base interaction-press
+                                                ${inputValue.trim()
+                                                    ? 'bg-accent-primary text-white shadow-lg shadow-orange-500/20 hover:bg-orange-600'
+                                                    : 'bg-white/5 text-white/10 cursor-not-allowed'
+                                                }
+                                            `}
+                                        >
+                                            <ArrowRight className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
+            </div>
+
+            {/* Stop Confirmation Modal */}
+            <AnimatePresence>
+                {showStopConfirm && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="fixed inset-0 z-[9999] flex items-center justify-center no-drag"
+                        onClick={() => setShowStopConfirm(false)}
+                    >
+                        {/* Backdrop */}
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+                        {/* Modal */}
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.92, y: 8 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.92, y: 8 }}
+                            transition={{ duration: 0.2, ease: [0.19, 1, 0.22, 1] }}
+                            className="relative w-[340px] rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-black/50"
+                            style={{ background: 'rgba(20, 20, 20, 0.95)' }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Orange accent bar */}
+                            <div className="h-1 w-full bg-gradient-to-r from-[#F59E0B] via-[#E8750A] to-[#D96C08]" />
+
+                            <div className="p-5">
+                                {/* Icon + Title */}
+                                <div className="flex items-center gap-3 mb-3">
+                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#F59E0B]/20 via-[#E8750A]/15 to-[#D96C08]/10 flex items-center justify-center border border-[#E8750A]/20">
+                                        <div className="w-4 h-4 rounded-[3px] bg-[#E8750A]" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-[15px] font-semibold text-white">End Meeting?</h3>
+                                        <p className="text-[12px] text-white/50">This will stop all recording</p>
+                                    </div>
+                                </div>
+
+                                <p className="text-[13px] text-white/60 leading-relaxed mb-5">
+                                    Your transcript and conversation history will be saved. Audio capture will stop immediately.
+                                </p>
+
+                                {/* Actions */}
+                                <div className="flex gap-2.5">
+                                    <button
+                                        onClick={() => setShowStopConfirm(false)}
+                                        className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-medium text-white/70 bg-white/5 border border-white/8 hover:bg-white/10 hover:text-white transition-all duration-150"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setShowStopConfirm(false);
+                                            onEndMeeting ? onEndMeeting() : window.electronAPI.quitApp();
+                                        }}
+                                        className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-semibold text-white bg-gradient-to-r from-[#F59E0B] via-[#E8750A] to-[#D96C08] hover:brightness-110 shadow-lg shadow-[#E8750A]/20 transition-all duration-150 active:scale-[0.97]"
+                                    >
+                                        End Meeting
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>

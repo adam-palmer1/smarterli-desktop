@@ -16,6 +16,8 @@
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 
+const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
+
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 
@@ -25,6 +27,8 @@ export interface TranscriptEvent {
   is_final: boolean;
   confidence: number;
   timestamp: number;
+  person_id?: string;
+  person_name?: string;
 }
 
 export interface CreditUpdateEvent {
@@ -342,6 +346,13 @@ export class AudioStreamer extends EventEmitter {
       const message = JSON.parse(data.toString());
       const msgType = message.type;
 
+      if (DEBUG_NET) {
+        // Skip noisy keepalives, log everything else
+        if (msgType !== 'keepalive') {
+          console.log(`[NET] ← WS audio: ${JSON.stringify(message).substring(0, 300)}`);
+        }
+      }
+
       switch (msgType) {
         case 'transcript':
           this.emit('transcript', {
@@ -350,6 +361,8 @@ export class AudioStreamer extends EventEmitter {
             is_final: message.is_final,
             confidence: message.confidence ?? 1.0,
             timestamp: message.timestamp ?? Date.now(),
+            person_id: message.person_id,
+            person_name: message.person_name,
           } as TranscriptEvent);
           break;
 

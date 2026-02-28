@@ -5,6 +5,7 @@ use anyhow::Result;
 use cidre::{arc, sc, cm, dispatch, ns, objc, define_obj_type};
 use cidre::sc::StreamOutput;
 use ringbuf::{traits::{Producer, Split}, HeapProd, HeapRb, HeapCons};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // keep for compatibility
 use cidre::core_audio as ca;
@@ -57,21 +58,37 @@ impl sc::stream::OutputImpl for AudioHandler {
         match sample_buf.audio_buf_list_in::<1>(cm::sample_buffer::Flags(0), None, None) {
             Ok(buf_list) => {
                 let buffer_count = buf_list.list().number_buffers as usize;
+
+                // Diagnostic: log audio levels periodically
+                static SCK_LOG_COUNTER: AtomicUsize = AtomicUsize::new(0);
+                let count = SCK_LOG_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+                let should_log = count <= 10 || count % 100 == 0;
+
                 for i in 0..buffer_count {
                     let buffer = &buf_list.list().buffers[i];
                     let data_ptr = buffer.data as *const f32;
                     let byte_count = buffer.data_bytes_size as usize;
-                    
+
                     // Validate sample format (must be f32 aligned)
                     if byte_count == 0 || byte_count % 4 != 0 {
                         continue;
                     }
-                    
+
                     let float_count = byte_count / 4;
-                    
+
                     if float_count > 0 && !data_ptr.is_null() {
                         unsafe {
                             let slice = std::slice::from_raw_parts(data_ptr, float_count);
+
+                            if should_log {
+                                let nonzero = slice.iter().filter(|&&s| s != 0.0).count();
+                                let rms: f32 = (slice.iter().map(|s| s * s).sum::<f32>() / float_count as f32).sqrt();
+                                println!(
+                                    "[SystemAudio-SCK] Callback #{}: {} samples, nonzero={}, rms={:.6}",
+                                    count, float_count, nonzero, rms
+                                );
+                            }
+
                             // Push audio to ring buffer
                             let _pushed = inner.producer.push_slice(slice);
                         }
@@ -99,28 +116,29 @@ impl SpeakerInput {
         
         // Get available content - triggers permission check
         // Use blocking wait since we're in a sync context
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-        use std::cell::UnsafeCell;
-        
-        let content_cell: Arc<UnsafeCell<Option<arc::R<sc::ShareableContent>>>> = Arc::new(UnsafeCell::new(None));
+        use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+
+        let content_cell: Arc<Mutex<Option<arc::R<sc::ShareableContent>>>> = Arc::new(Mutex::new(None));
         let content_ready = Arc::new(AtomicBool::new(false));
         let content_error = Arc::new(AtomicBool::new(false));
-        
+
         let cell_clone = content_cell.clone();
         let ready_clone = content_ready.clone();
         let error_clone = content_error.clone();
-        
+
         sc::ShareableContent::current_with_ch(move |content_opt, error_opt| {
             if let Some(e) = error_opt {
                 println!("[SpeakerInput] ERROR: ScreenCaptureKit access denied: {:?}", e);
                 error_clone.store(true, Ordering::SeqCst);
             } else if let Some(c) = content_opt {
                 // Retain the content
-                unsafe { *cell_clone.get() = Some(c.retained()); }
+                if let Ok(mut guard) = cell_clone.lock() {
+                    *guard = Some(c.retained());
+                }
             }
             ready_clone.store(true, Ordering::SeqCst);
         });
-        
+
         // Wait for shareable content (max 5 seconds)
         for _ in 0..500 {
             if content_ready.load(Ordering::SeqCst) {
@@ -128,13 +146,13 @@ impl SpeakerInput {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        
+
         if content_error.load(Ordering::SeqCst) {
             println!("[SpeakerInput] Please grant Screen Recording permission in System Settings > Privacy & Security");
             return Err(anyhow::anyhow!("ScreenCaptureKit access denied"));
         }
-        
-        let content = unsafe { (*content_cell.get()).take() }
+
+        let content = content_cell.lock().unwrap().take()
             .ok_or_else(|| anyhow::anyhow!("Failed to get shareable content (timeout)"))?;
         
         let displays = content.displays();

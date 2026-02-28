@@ -1,6 +1,6 @@
 // ipcHandlers.ts
 
-import { app, ipcMain, shell, BrowserWindow } from "electron"
+import { app, ipcMain, shell } from "electron"
 import { AppState } from "./main"
 import * as path from "path";
 import * as fs from "fs";
@@ -8,6 +8,16 @@ import { AudioDevices } from "./audio/AudioDevices";
 
 import { ENGLISH_VARIANTS } from "./config/languages"
 import { SERVER_URL } from "./config/constants"
+
+/** Format duration_ms (number) to a human-readable string like "12m" or "1h 5m" */
+function formatDurationMs(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${totalSeconds}s`;
+}
 
 export function initializeIpcHandlers(appState: AppState): void {
   const safeHandle = (channel: string, listener: (event: any, ...args: any[]) => Promise<any> | any) => {
@@ -142,6 +152,11 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.transcriptWindowHelper.toggle(x, y)
   })
 
+  // Live Feedback Window
+  safeHandle("toggle-live-feedback", () => {
+    appState.toggleLiveFeedback()
+  })
+
   // ==========================================
   // Screenshot Handlers
   // ==========================================
@@ -260,8 +275,8 @@ export function initializeIpcHandlers(appState: AppState): void {
     return AudioDevices.getOutputDevices();
   });
 
-  safeHandle("start-audio-test", async (event, deviceId?: string) => {
-    appState.startAudioTest(deviceId);
+  safeHandle("start-audio-test", async (event, inputDeviceId?: string, outputDeviceId?: string) => {
+    appState.startAudioTest(inputDeviceId, outputDeviceId);
     return { success: true };
   });
 
@@ -299,6 +314,46 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
+  safeHandle("pause-meeting", async () => {
+    try {
+      await appState.pauseMeeting();
+      return { success: true };
+    } catch (error: any) {
+      console.error("Error pausing meeting:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle("resume-meeting", async () => {
+    try {
+      await appState.resumeMeeting();
+      return { success: true };
+    } catch (error: any) {
+      console.error("Error resuming meeting:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle("set-input-streaming", async (_, enabled: boolean) => {
+    appState.setInputStreaming(enabled);
+    return { success: true };
+  });
+
+  safeHandle("set-output-streaming", async (_, enabled: boolean) => {
+    appState.setOutputStreaming(enabled);
+    return { success: true };
+  });
+
+  safeHandle("reconfigure-audio-mid-meeting", async (_, config?: { inputDeviceId?: string; outputDeviceId?: string }) => {
+    try {
+      await appState.reconfigureMidMeeting(config);
+      return { success: true };
+    } catch (error: any) {
+      console.error("Error reconfiguring audio mid-meeting:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // ==========================================
   // Meetings - proxy through ServerClient
   // ==========================================
@@ -306,13 +361,55 @@ export function initializeIpcHandlers(appState: AppState): void {
   safeHandle("get-recent-meetings", async () => {
     const client = appState.getServerClient();
     if (!client) return [];
-    return client.getMeetings(50);
+    const meetings = await client.getMeetings(50);
+    // Map server schema (start_time, duration_ms) to frontend schema (date, duration)
+    return meetings.map((m: any) => ({
+      id: m.id,
+      title: m.title || 'Untitled Meeting',
+      date: m.start_time,
+      duration: m.duration_ms != null ? formatDurationMs(m.duration_ms) : '',
+      summary: m.summary || '',
+    }));
   });
 
   safeHandle("get-meeting-details", async (_, id: string) => {
     const client = appState.getServerClient();
     if (!client) return null;
-    return client.getMeeting(id);
+    const m: any = await client.getMeeting(id);
+    if (!m) return null;
+
+    // Map MeetingDetail (OpenAPI) → frontend Meeting interface
+    // summary_json is an opaque object; the frontend writes camelCase keys
+    // (overview, actionItems, keyPoints, actionItemsTitle, keyPointsTitle)
+    // so we read those same keys back.
+    const sj = m.summary_json || {};
+    return {
+      id: m.id,                                          // uuid
+      title: m.title || 'Untitled Meeting',              // string | null
+      date: m.start_time,                                // string (ISO)
+      duration: m.duration_ms != null ? formatDurationMs(m.duration_ms) : '', // integer | null
+      summary: sj.overview || '',
+      detailedSummary: {
+        overview: sj.overview || '',
+        actionItems: sj.actionItems || [],
+        keyPoints: sj.keyPoints || [],
+        actionItemsTitle: sj.actionItemsTitle,
+        keyPointsTitle: sj.keyPointsTitle,
+      },
+      // TranscriptOut[] → frontend transcript[]
+      transcript: (m.transcripts || []).map((t: any) => ({
+        speaker: t.speaker,                              // string
+        text: t.content,                                 // string
+        timestamp: t.timestamp_ms,                       // integer
+      })),
+      // AIInteractionOut[] → frontend usage[]
+      usage: (m.ai_interactions || []).map((a: any) => ({
+        type: a.type,                                    // string
+        timestamp: a.timestamp_ms,                       // integer
+        question: a.user_query || '',                    // string | null
+        answer: a.ai_response || '',                     // string | null
+      })),
+    };
   });
 
   safeHandle("update-meeting-title", async (_, { id, title }: { id: string; title: string }) => {
@@ -393,7 +490,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     const client = appState.getServerClient();
     if (!client) return { connected: false };
     try {
-      await client.healthCheck();
+      await client.getMe();
       return { connected: true };
     } catch {
       return { connected: false };
@@ -442,15 +539,15 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
-  safeHandle("generate-what-to-say", async (_, question?: string, imagePath?: string) => {
+  safeHandle("generate-what-to-say", async (_, imagePath?: string, model?: string) => {
     const client = appState.getIntelligenceClient();
     const sessionId = appState.getCurrentSessionId();
-    if (!client || !sessionId) return { answer: null, question: question || 'unknown' };
+    if (!client || !sessionId) return { answer: null };
     try {
-      const result = await client.streamWhatToSay(sessionId, question, imagePath);
-      return { answer: result, question: question || 'inferred from context' };
+      const result = await client.streamWhatToSay(sessionId, imagePath, model);
+      return { answer: result };
     } catch (e: any) {
-      return { answer: null, question: question || 'unknown' };
+      return { answer: null };
     }
   });
 
@@ -647,16 +744,19 @@ export function initializeIpcHandlers(appState: AppState): void {
   // RAG (Retrieval-Augmented Generation) Handlers - proxy through server SSE
   // ==========================================
 
-  safeHandle("rag:query-meeting", async (event, { meetingId, query }: { meetingId: string; query: string }) => {
+  safeHandle("rag:query-meeting", async (event, { meetingId, query, topK }: { meetingId: string; query: string; topK?: number }) => {
     const cm = require('./services/CredentialsManager').CredentialsManager.getInstance();
     const apiKey = cm.getApiKey();
     if (!apiKey) return { fallback: true };
 
     try {
+      const requestBody: Record<string, unknown> = { meeting_id: meetingId, query };
+      if (topK !== undefined) requestBody.top_k = topK;
+
       const response = await fetch(`${SERVER_URL}/rag/query`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ meeting_id: meetingId, query }),
+        body: JSON.stringify(requestBody),
       });
       if (!response.ok) return { fallback: true };
 
@@ -674,6 +774,12 @@ export function initializeIpcHandlers(appState: AppState): void {
           if (block.startsWith('event: token')) {
             const data = block.split('\ndata: ')[1];
             if (data) event.sender.send("rag:stream-chunk", { meetingId, chunk: data.replace(/\\n/g, '\n') });
+          } else if (block.startsWith('event: sources')) {
+            const data = block.split('\ndata: ')[1];
+            if (data) event.sender.send("rag:sources", { meetingId, sources: JSON.parse(data) });
+          } else if (block.startsWith('event: error')) {
+            const data = block.split('\ndata: ')[1];
+            if (data) event.sender.send("rag:stream-error", { meetingId, error: data });
           } else if (block.startsWith('event: done')) {
             event.sender.send("rag:stream-complete", { meetingId });
           }
@@ -686,16 +792,19 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
-  safeHandle("rag:query-global", async (event, { query }: { query: string }) => {
+  safeHandle("rag:query-global", async (event, { query, topK }: { query: string; topK?: number }) => {
     const cm = require('./services/CredentialsManager').CredentialsManager.getInstance();
     const apiKey = cm.getApiKey();
     if (!apiKey) return { fallback: true };
 
     try {
+      const requestBody: Record<string, unknown> = { query };
+      if (topK !== undefined) requestBody.top_k = topK;
+
       const response = await fetch(`${SERVER_URL}/rag/query-global`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify(requestBody),
       });
       if (!response.ok) return { fallback: true };
 
@@ -713,6 +822,12 @@ export function initializeIpcHandlers(appState: AppState): void {
           if (block.startsWith('event: token')) {
             const data = block.split('\ndata: ')[1];
             if (data) event.sender.send("rag:stream-chunk", { global: true, chunk: data.replace(/\\n/g, '\n') });
+          } else if (block.startsWith('event: sources')) {
+            const data = block.split('\ndata: ')[1];
+            if (data) event.sender.send("rag:sources", { global: true, sources: JSON.parse(data) });
+          } else if (block.startsWith('event: error')) {
+            const data = block.split('\ndata: ')[1];
+            if (data) event.sender.send("rag:stream-error", { global: true, error: data });
           } else if (block.startsWith('event: done')) {
             event.sender.send("rag:stream-complete", { global: true });
           }
@@ -834,16 +949,139 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   // ==========================================
-  // Speaker Rename Handlers
+  // Speaker Management Handlers
   // ==========================================
 
-  // Speaker rename is managed server-side; local stubs for compatibility
-  safeHandle("rename-speaker", async (_, { original, displayName }: { original: string; displayName: string }) => {
-    // Speaker mapping is handled server-side now
-    return { success: true };
+  safeHandle("get-meeting-speakers", async (_, meetingId: string) => {
+    const client = appState.getServerClient();
+    if (!client) return [];
+    try {
+      return await client.getMeetingSpeakers(meetingId);
+    } catch {
+      return [];
+    }
+  });
+
+  safeHandle("rename-speaker", async (_, { meetingId, speakerId, displayName, personId }: { meetingId: string; speakerId: string; displayName?: string; personId?: string }) => {
+    const client = appState.getServerClient();
+    if (!client) return { success: false, error: 'Not connected' };
+    try {
+      const updates: any = {};
+      if (displayName !== undefined) updates.display_name = displayName;
+      if (personId !== undefined) updates.person_id = personId;
+      await client.updateMeetingSpeaker(meetingId, speakerId, updates);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  safeHandle("unlink-speaker-person", async (_, { meetingId, speakerId }: { meetingId: string; speakerId: string }) => {
+    const client = appState.getServerClient();
+    if (!client) return { success: false };
+    try {
+      await client.unlinkSpeakerPerson(meetingId, speakerId);
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
   });
 
   safeHandle("get-speaker-mappings", async () => {
     return [];
+  });
+
+  // ==========================================
+  // Person Management Handlers
+  // ==========================================
+
+  safeHandle("search-persons", async (_, { search, limit }: { search?: string; limit?: number }) => {
+    const client = appState.getServerClient();
+    if (!client) return [];
+    try {
+      return await client.getPersons(search, limit);
+    } catch {
+      return [];
+    }
+  });
+
+  safeHandle("create-person", async (_, { name, email }: { name: string; email?: string }) => {
+    const client = appState.getServerClient();
+    if (!client) return null;
+    try {
+      return await client.createPerson(name, email);
+    } catch (e: any) {
+      return null;
+    }
+  });
+
+  safeHandle("update-person", async (_, { id, updates }: { id: string; updates: { name?: string; email?: string; notes?: string } }) => {
+    const client = appState.getServerClient();
+    if (!client) return null;
+    try {
+      return await client.updatePerson(id, updates);
+    } catch (e: any) {
+      return null;
+    }
+  });
+
+  safeHandle("delete-person", async (_, id: string) => {
+    const client = appState.getServerClient();
+    if (!client) return false;
+    return await client.deletePerson(id);
+  });
+
+  // ==========================================
+  // Voiceprint Management Handlers
+  // ==========================================
+
+  safeHandle("get-person-voiceprints", async (_, personId: string) => {
+    const client = appState.getServerClient();
+    if (!client) return [];
+    try {
+      return await client.getPersonVoiceprints(personId);
+    } catch {
+      return [];
+    }
+  });
+
+  safeHandle("enroll-voiceprint", async (_, { personId, meetingId, speakerLabel }: { personId: string; meetingId: string; speakerLabel: string }) => {
+    const client = appState.getServerClient();
+    if (!client) return null;
+    try {
+      return await client.enrollVoiceprint(personId, meetingId, speakerLabel);
+    } catch {
+      return null;
+    }
+  });
+
+  safeHandle("delete-voiceprint", async (_, voiceprintId: string) => {
+    const client = appState.getServerClient();
+    if (!client) return false;
+    return await client.deleteVoiceprint(voiceprintId);
+  });
+
+  // ==========================================
+  // User Profile Handlers
+  // ==========================================
+
+  safeHandle("update-user-profile", async (_, updates: { display_name?: string }) => {
+    const client = appState.getServerClient();
+    if (!client) return null;
+    try {
+      return await client.updateProfile(updates);
+    } catch {
+      return null;
+    }
+  });
+
+  safeHandle("get-user-profile", async () => {
+    const client = appState.getServerClient();
+    if (!client) return null;
+    try {
+      return await client.getMe();
+    } catch {
+      return null;
+    }
   });
 }

@@ -10,18 +10,19 @@
 // - Speech onset: 0ms delay (immediate)
 // - Hangover: Only affects AFTER speech ends (no latency impact)
 
-use std::time::{Duration, Instant};  // Added for timing
+use std::time::{Duration, Instant};
+use webrtc_vad::{Vad, VadMode, SampleRate};
 
 /// Configuration for silence suppression
 /// Optimized for low latency
 pub struct SilenceSuppressionConfig {
-    /// RMS threshold for speech detection (i16 scale: 0-32767)
-    pub speech_threshold_rms: f32,
-    
+    /// WebRTC VAD aggressiveness mode for speech detection
+    pub vad_mode: VadMode,
+
     /// Duration to continue sending full audio after speech ends
     /// This does NOT add latency - only affects when we switch to keepalives
     pub speech_hangover: Duration,
-    
+
     /// How often to send a keepalive frame during silence
     pub silence_keepalive_interval: Duration,
 }
@@ -29,28 +30,27 @@ pub struct SilenceSuppressionConfig {
 impl Default for SilenceSuppressionConfig {
     fn default() -> Self {
         Self {
-            speech_threshold_rms: 100.0,  // Lower = more sensitive
-            speech_hangover: Duration::from_millis(200),  // Shorter = faster cost savings
+            vad_mode: VadMode::Aggressive,
+            speech_hangover: Duration::from_millis(200),
             silence_keepalive_interval: Duration::from_millis(100),
         }
     }
 }
 
 impl SilenceSuppressionConfig {
-    /// Create config for system audio (very permissive - system audio is quieter)
+    /// Create config for system audio — Quality mode (most sensitive) for clean digital audio
     pub fn for_system_audio() -> Self {
         Self {
-            // System audio often has much lower levels
-            speech_threshold_rms: 30.0,  // Very low threshold
+            vad_mode: VadMode::Quality,
             speech_hangover: Duration::from_millis(300),
             silence_keepalive_interval: Duration::from_millis(100),
         }
     }
-    
-    /// Create config for microphone (standard)
+
+    /// Create config for microphone — Aggressive mode to reject typing, fans, AC
     pub fn for_microphone() -> Self {
         Self {
-            speech_threshold_rms: 100.0,
+            vad_mode: VadMode::Aggressive,
             speech_hangover: Duration::from_millis(200),
             silence_keepalive_interval: Duration::from_millis(100),
         }
@@ -60,6 +60,7 @@ impl SilenceSuppressionConfig {
 /// Silence suppression state machine
 pub struct SilenceSuppressor {
     config: SilenceSuppressionConfig,
+    vad: Option<Vad>,
     state: SuppressionState,
     last_speech_time: Instant,
     last_keepalive_time: Instant,
@@ -88,13 +89,31 @@ pub enum FrameAction {
 impl SilenceSuppressor {
     pub fn new(config: SilenceSuppressionConfig) -> Self {
         let now = Instant::now();
-        println!("[SilenceSuppressor] Created with threshold={}, hangover={}ms, keepalive={}ms",
-            config.speech_threshold_rms,
-            config.speech_hangover.as_millis(),
-            config.silence_keepalive_interval.as_millis()
-        );
+        let (vad_mode, vad_mode_name) = match config.vad_mode {
+            VadMode::Quality => (VadMode::Quality, "Quality"),
+            VadMode::LowBitrate => (VadMode::LowBitrate, "LowBitrate"),
+            VadMode::Aggressive => (VadMode::Aggressive, "Aggressive"),
+            VadMode::VeryAggressive => (VadMode::VeryAggressive, "VeryAggressive"),
+        };
+        let vad = match std::panic::catch_unwind(|| {
+            Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, vad_mode)
+        }) {
+            Ok(v) => {
+                println!("[SilenceSuppressor] Created with WebRTC VAD mode={}, hangover={}ms, keepalive={}ms",
+                    vad_mode_name,
+                    config.speech_hangover.as_millis(),
+                    config.silence_keepalive_interval.as_millis()
+                );
+                Some(v)
+            }
+            Err(_) => {
+                println!("[SilenceSuppressor] WARNING: Failed to init WebRTC VAD, falling back to RMS");
+                None
+            }
+        };
         Self {
             config,
+            vad,
             state: SuppressionState::Active, // Start in active to not miss first words
             last_speech_time: now,
             last_keepalive_time: now,
@@ -107,8 +126,10 @@ impl SilenceSuppressor {
     /// CRITICAL: Speech frames are NEVER delayed
     pub fn process(&mut self, frame: &[i16]) -> FrameAction {
         let now = Instant::now();
-        let rms = calculate_rms(frame);
-        let has_speech = rms >= self.config.speech_threshold_rms;
+        let has_speech = match &mut self.vad {
+            Some(vad) => vad.is_voice_segment(frame).unwrap_or(false),
+            None => calculate_rms(frame) >= 100.0,
+        };
         
         // ALWAYS check for speech first - immediate response
         if has_speech {
@@ -191,30 +212,35 @@ pub fn generate_silence_frame(size: usize) -> Vec<i16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
-    fn test_speech_immediate() {
-        let mut suppressor = SilenceSuppressor::new(SilenceSuppressionConfig::default());
-        
-        // Loud frame should be sent immediately
-        let loud_frame: Vec<i16> = vec![500; 320];
-        match suppressor.process(&loud_frame) {
-            FrameAction::Send(_) => {}
-            _ => panic!("Loud frame should be sent immediately"),
-        }
-        assert!(suppressor.is_speech());
-    }
-    
-    #[test]
-    fn test_silence_keepalive() {
+    fn test_silence_suppressed() {
         let mut suppressor = SilenceSuppressor::new(SilenceSuppressionConfig {
-            speech_threshold_rms: 100.0,
+            vad_mode: VadMode::Aggressive,
             speech_hangover: Duration::from_millis(0),
             silence_keepalive_interval: Duration::from_millis(50),
         });
-        
+
+        // Silent frame should not be classified as speech
         let silent_frame: Vec<i16> = vec![0; 320];
         let action = suppressor.process(&silent_frame);
         assert!(matches!(action, FrameAction::SendSilence | FrameAction::Suppress));
+    }
+
+    #[test]
+    fn test_vad_init_modes() {
+        // Both factory configs should create working suppressors
+        let mic = SilenceSuppressor::new(SilenceSuppressionConfig::for_microphone());
+        assert!(mic.vad.is_some());
+
+        let sys = SilenceSuppressor::new(SilenceSuppressionConfig::for_system_audio());
+        assert!(sys.vad.is_some());
+    }
+
+    #[test]
+    fn test_rms_fallback() {
+        // calculate_rms still works for the fallback path
+        assert_eq!(calculate_rms(&[]), 0.0);
+        assert!(calculate_rms(&[1000; 320]) > 0.0);
     }
 }

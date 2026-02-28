@@ -16,6 +16,8 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 
+const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
+
 export interface IntelligenceTokenEvent {
   mode: string;
   token: string;
@@ -56,13 +58,13 @@ export class IntelligenceClient extends EventEmitter {
    * Stream "What to Say" suggestions based on current session context.
    * Optionally includes a screenshot for visual context.
    */
-  async streamWhatToSay(sessionId: string, question?: string, imagePath?: string): Promise<string> {
+  async streamWhatToSay(sessionId: string, imagePath?: string, model?: string): Promise<string> {
     const body: any = {};
-    if (question) {
-      body.question = question;
-    }
     if (imagePath) {
       body.image_base64 = await this.readFileAsBase64(imagePath);
+    }
+    if (model) {
+      body.model = model;
     }
     return this.streamSSE(sessionId, 'what-to-say', body);
   }
@@ -143,6 +145,10 @@ export class IntelligenceClient extends EventEmitter {
 
     const url = `${this.serverUrl}/intelligence/${sessionId}/${mode}`;
 
+    if (DEBUG_NET) {
+      console.log(`[NET] → SSE POST ${url}${body ? ' ' + JSON.stringify(body).substring(0, 200) : ''}`);
+    }
+
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
@@ -162,8 +168,13 @@ export class IntelligenceClient extends EventEmitter {
         return '';
       }
       const errorMsg = `Network error: ${err.message}`;
+      if (DEBUG_NET) console.log(`[NET] ✗ SSE ${url} — ${errorMsg}`);
       this.emit('error', { mode, error: errorMsg } as IntelligenceErrorEvent);
       throw new Error(errorMsg);
+    }
+
+    if (DEBUG_NET) {
+      console.log(`[NET] ← SSE ${url} ${response.status} ${response.statusText}`);
     }
 
     if (!response.ok) {
@@ -174,6 +185,7 @@ export class IntelligenceClient extends EventEmitter {
       } catch {
         errorDetail = `HTTP ${response.status}: ${response.statusText}`;
       }
+      if (DEBUG_NET) console.log(`[NET] ✗ SSE ${url} — ${errorDetail}`);
       this.emit('error', { mode, error: errorDetail } as IntelligenceErrorEvent);
       throw new Error(errorDetail);
     }
@@ -295,7 +307,9 @@ export class IntelligenceClient extends EventEmitter {
       if (line.startsWith('event:')) {
         eventName = line.substring(6).trim();
       } else if (line.startsWith('data:')) {
-        dataLines.push(line.substring(5).trimStart());
+        // SSE spec: skip exactly one optional space after "data:"
+        const rest = line.substring(5);
+        dataLines.push(rest.startsWith(' ') ? rest.substring(1) : rest);
       }
       // Ignore lines starting with ':' (comments) or other fields
     }

@@ -333,10 +333,7 @@ export class WindowHelper {
       this.isWindowVisible = true;
     }
 
-    // Hide Launcher SECOND
-    if (this.launcherWindow && !this.launcherWindow.isDestroyed()) {
-      this.launcherWindow.hide();
-    }
+    // Keep launcher visible so the user can still browse and interact with it
   }
 
   public switchToLauncher(): void {

@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import smarterliIcon from './icon.png';
 
 // ============================================
@@ -94,8 +99,27 @@ const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = (
             transition={{ duration: 0.15 }}
             className="flex flex-col items-start mb-6"
         >
-            <div className="text-text-primary text-[15px] leading-relaxed max-w-[85%]">
-                {content}
+            <div className="text-text-primary text-[15px] leading-relaxed max-w-[85%] markdown-content">
+                <ReactMarkdown
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                    components={{
+                        p: ({ node, ...props }: any) => <p className="mb-2 last:mb-0" {...props} />,
+                        strong: ({ node, ...props }: any) => <strong className="font-bold text-text-primary" {...props} />,
+                        em: ({ node, ...props }: any) => <em className="italic text-text-secondary" {...props} />,
+                        ul: ({ node, ...props }: any) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
+                        ol: ({ node, ...props }: any) => <ol className="list-decimal ml-4 mb-2 space-y-1" {...props} />,
+                        li: ({ node, ...props }: any) => <li className="pl-1" {...props} />,
+                        h1: ({ node, ...props }: any) => <h1 className="text-lg font-bold text-text-primary mb-2 mt-3" {...props} />,
+                        h2: ({ node, ...props }: any) => <h2 className="text-base font-bold text-text-primary mb-2 mt-3" {...props} />,
+                        h3: ({ node, ...props }: any) => <h3 className="text-sm font-bold text-text-primary mb-1 mt-2" {...props} />,
+                        code: ({ node, ...props }: any) => <code className="bg-bg-elevated rounded px-1 py-0.5 text-xs font-mono text-accent-primary" {...props} />,
+                        blockquote: ({ node, ...props }: any) => <blockquote className="border-l-2 border-accent-primary/50 pl-3 italic text-text-tertiary my-2" {...props} />,
+                        a: ({ node, ...props }: any) => <a className="text-accent-primary hover:opacity-80 hover:underline" target="_blank" rel="noopener noreferrer" {...props} />,
+                    }}
+                >
+                    {content}
+                </ReactMarkdown>
                 {isStreaming && (
                     <motion.span
                         className="inline-block w-0.5 h-4 bg-text-secondary ml-0.5 align-middle"

@@ -113,12 +113,16 @@ const EditableTextBlock: React.FC<EditableTextBlockProps> = ({
         setIsEditing(true);
     };
 
-    // Focus management
+    // Focus management — place cursor at end instead of selecting all text
     useEffect(() => {
         if (isEditing && contentRef.current) {
             contentRef.current.focus();
-            // If autoFocus was relevant (newly created), we might want cursor at start or end?
-            // Standard behavior usually end, but for new empty item it doesn't matter.
+            const range = document.createRange();
+            const sel = window.getSelection();
+            range.selectNodeContents(contentRef.current);
+            range.collapse(false);
+            sel?.removeAllRanges();
+            sel?.addRange(range);
         }
     }, [isEditing]);
 
@@ -135,7 +139,7 @@ const EditableTextBlock: React.FC<EditableTextBlockProps> = ({
             onKeyDown={handleKeyDown}
             className={`
                 outline-none min-w-[10px] cursor-text transition-colors duration-200
-                bg-transparent
+                ${isEditing ? 'bg-black/5 dark:bg-white/5 ring-1 ring-border-subtle' : 'bg-transparent hover:bg-black/[0.03] dark:hover:bg-white/[0.03]'}
                 ${!localValue && placeholder ? 'empty:before:content-[attr(data-placeholder)] empty:before:text-white/20' : ''}
                 ${className}
             `}

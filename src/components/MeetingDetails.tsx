@@ -1,11 +1,29 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Search, Mail, Link, ChevronDown, Play, ArrowUp, Copy, Check, MoreHorizontal, Settings, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Search, Mail, Link, ChevronDown, Play, ArrowUp, Copy, Check, MoreHorizontal, Settings, ArrowRight, X, Users, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import MeetingChatOverlay from './MeetingChatOverlay';
 import EditableTextBlock from './EditableTextBlock';
 import SmarterliLogo from './icon.png';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+
+interface SpeakerInfo {
+    id: string;
+    channel_label: string;
+    display_name: string | null;
+    person_id: string | null;
+    person_name: string | null;
+    is_self: boolean;
+}
+
+interface PersonResult {
+    id: string;
+    name: string;
+    email: string | null;
+}
 
 const formatTime = (ms: number) => {
     const date = new Date(ms);
@@ -59,6 +77,208 @@ const MeetingDetails: React.FC<MeetingDetailsProps> = ({ meeting: initialMeeting
     const [isCopied, setIsCopied] = useState(false);
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [submittedQuery, setSubmittedQuery] = useState('');
+    const [speakers, setSpeakers] = useState<Map<string, SpeakerInfo>>(new Map());
+    const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
+    const [editValue, setEditValue] = useState('');
+    const [personResults, setPersonResults] = useState<PersonResult[]>([]);
+    const [showDropdown, setShowDropdown] = useState(false);
+    const editInputRef = useRef<HTMLInputElement>(null);
+    const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const editHandledRef = useRef(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const isSelectingRef = useRef(false);
+
+    // Load speakers on mount
+    useEffect(() => {
+        if (meeting.id && window.electronAPI?.getMeetingSpeakers) {
+            window.electronAPI.getMeetingSpeakers(meeting.id).then((list) => {
+                const map = new Map<string, SpeakerInfo>();
+                list.forEach((s: any) => map.set(s.channel_label, s));
+                setSpeakers(map);
+            });
+        }
+    }, [meeting.id]);
+
+    // Focus edit input
+    useEffect(() => {
+        if (editingSpeaker && editInputRef.current) {
+            editInputRef.current.focus();
+            editInputRef.current.select();
+        }
+    }, [editingSpeaker]);
+
+    // Debounced person search — always show dropdown when editing (other speakers are always available)
+    useEffect(() => {
+        if (!editingSpeaker) {
+            setPersonResults([]);
+            setShowDropdown(false);
+            return;
+        }
+        // Always show dropdown for merge options even before typing
+        setShowDropdown(true);
+        if (!editValue.trim()) {
+            setPersonResults([]);
+            return;
+        }
+        if (searchTimeout.current) clearTimeout(searchTimeout.current);
+        searchTimeout.current = setTimeout(async () => {
+            const results = await window.electronAPI.searchPersons(editValue.trim(), 5);
+            setPersonResults(results || []);
+        }, 200);
+        return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
+    }, [editValue, editingSpeaker]);
+
+    const getSpeakerLabel = (speaker: string) => {
+        const info = speakers.get(speaker);
+        if (info?.display_name) return info.display_name;
+        if (info?.person_name) return info.person_name;
+        if (speaker === 'user') return 'You';
+        if (speaker === 'interviewer') return 'Speaker';
+        const match = speaker.match(/speaker_(?:SPEAKER_)?(?:speaker)?(\d+)/i);
+        if (match) return `Speaker ${parseInt(match[1], 10) + 1}`;
+        return speaker;
+    };
+
+    const getSpeakerColor = (speaker: string) => {
+        if (speaker === 'user') return 'bg-orange-500/20 text-orange-600 dark:text-orange-400';
+        if (speaker === 'interviewer') return 'bg-purple-500/20 text-purple-600 dark:text-purple-400';
+        const colors = [
+            'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400',
+            'bg-amber-500/20 text-amber-600 dark:text-amber-400',
+            'bg-rose-500/20 text-rose-600 dark:text-rose-400',
+            'bg-cyan-500/20 text-cyan-600 dark:text-cyan-400',
+        ];
+        let hash = 0;
+        for (let i = 0; i < speaker.length; i++) hash = speaker.charCodeAt(i) + ((hash << 5) - hash);
+        return colors[Math.abs(hash) % colors.length];
+    };
+
+    const handleStartEdit = (speaker: string) => {
+        editHandledRef.current = false;
+        setEditingSpeaker(speaker);
+        setEditValue('');
+        setPersonResults([]);
+    };
+
+    const handleSelectPerson = async (person: PersonResult) => {
+        if (!editingSpeaker || !meeting.id) return;
+        editHandledRef.current = true;
+        const speakerInfo = speakers.get(editingSpeaker);
+        if (speakerInfo) {
+            const voiceprint = await window.electronAPI.enrollVoiceprint(person.id, meeting.id, speakerInfo.channel_label);
+            if (!voiceprint) {
+                await window.electronAPI.renameSpeaker(meeting.id, speakerInfo.id, person.name, person.id);
+            }
+            setSpeakers(prev => {
+                const next = new Map(prev);
+                next.set(editingSpeaker!, { ...speakerInfo, display_name: person.name, person_id: person.id, person_name: person.name });
+                return next;
+            });
+        }
+        setEditingSpeaker(null);
+        setEditValue('');
+        setShowDropdown(false);
+    };
+
+    const handleCreateAndLink = async (name: string) => {
+        if (!editingSpeaker || !meeting.id) return;
+        editHandledRef.current = true;
+        const speakerInfo = speakers.get(editingSpeaker);
+        if (!speakerInfo) return;
+        const person = await window.electronAPI.createPerson(name);
+        if (!person) return;
+        const voiceprint = await window.electronAPI.enrollVoiceprint(person.id, meeting.id, speakerInfo.channel_label);
+        if (!voiceprint) {
+            await window.electronAPI.renameSpeaker(meeting.id, speakerInfo.id, person.name, person.id);
+        }
+        setSpeakers(prev => {
+            const next = new Map(prev);
+            next.set(editingSpeaker!, { ...speakerInfo, display_name: person.name, person_id: person.id, person_name: person.name });
+            return next;
+        });
+        setEditingSpeaker(null);
+        setEditValue('');
+        setShowDropdown(false);
+    };
+
+    const handleFinishEdit = async () => {
+        if (editHandledRef.current) return;
+        editHandledRef.current = true;
+        if (!editingSpeaker || !meeting.id) { setEditingSpeaker(null); setEditValue(''); setShowDropdown(false); return; }
+        const trimmed = editValue.trim();
+        const speakerInfo = speakers.get(editingSpeaker);
+        // If user typed a new name, rename; if empty, treat as cancel
+        if (trimmed && speakerInfo && trimmed !== getSpeakerLabel(editingSpeaker)) {
+            await window.electronAPI.renameSpeaker(meeting.id, speakerInfo.id, trimmed);
+            setSpeakers(prev => {
+                const next = new Map(prev);
+                next.set(editingSpeaker!, { ...speakerInfo, display_name: trimmed });
+                return next;
+            });
+        }
+        setEditingSpeaker(null);
+        setEditValue('');
+        setShowDropdown(false);
+    };
+
+    const handleCancelEdit = () => {
+        editHandledRef.current = true;
+        setEditingSpeaker(null);
+        setEditValue('');
+        setShowDropdown(false);
+    };
+
+    const handleClearMapping = async (speaker: string) => {
+        if (!meeting.id) return;
+        const speakerInfo = speakers.get(speaker);
+        if (speakerInfo) {
+            await window.electronAPI.unlinkSpeakerPerson(meeting.id, speakerInfo.id);
+            setSpeakers(prev => {
+                const next = new Map(prev);
+                next.set(speaker, { ...speakerInfo, display_name: null, person_id: null, person_name: null });
+                return next;
+            });
+        }
+    };
+
+    // Merge current editing speaker into a target speaker (same person identity)
+    const handleMergeSpeaker = async (targetChannelLabel: string) => {
+        if (!editingSpeaker || !meeting.id) return;
+        editHandledRef.current = true;
+        const sourceInfo = speakers.get(editingSpeaker);
+        const targetInfo = speakers.get(targetChannelLabel);
+        if (!sourceInfo || !targetInfo) return;
+
+        const targetName = getSpeakerLabel(targetChannelLabel);
+
+        try {
+            if (targetInfo.person_id) {
+                // Target is linked to a person — link source to same person via voiceprint
+                const voiceprint = await window.electronAPI.enrollVoiceprint(targetInfo.person_id, meeting.id, sourceInfo.channel_label);
+                if (!voiceprint) {
+                    await window.electronAPI.renameSpeaker(meeting.id, sourceInfo.id, targetName, targetInfo.person_id);
+                }
+                setSpeakers(prev => {
+                    const next = new Map(prev);
+                    next.set(editingSpeaker!, { ...sourceInfo, display_name: targetName, person_id: targetInfo.person_id, person_name: targetInfo.person_name });
+                    return next;
+                });
+            } else {
+                // Target has no person — just rename source to match target's display name
+                await window.electronAPI.renameSpeaker(meeting.id, sourceInfo.id, targetName);
+                setSpeakers(prev => {
+                    const next = new Map(prev);
+                    next.set(editingSpeaker!, { ...sourceInfo, display_name: targetName });
+                    return next;
+                });
+            }
+        } catch (err) {
+            // silently handle merge errors
+        }
+        setEditingSpeaker(null);
+        setEditValue('');
+        setShowDropdown(false);
+    };
 
     const handleSubmitQuestion = () => {
         if (query.trim()) {
@@ -95,7 +315,7 @@ KEY POINTS:
 ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'None'}
             `.trim();
         } else if (activeTab === 'transcript' && meeting.transcript) {
-            textToCopy = meeting.transcript.map(t => `[${formatTime(t.timestamp)}] ${t.speaker === 'user' ? 'Me' : 'Them'}: ${t.text}`).join('\n');
+            textToCopy = meeting.transcript.map(t => `[${formatTime(t.timestamp)}] ${getSpeakerLabel(t.speaker)}: ${t.text}`).join('\n');
         } else if (activeTab === 'usage' && meeting.usage) {
             textToCopy = meeting.usage.map(u => `Q: ${u.question || ''}\nA: ${u.answer || ''}`).join('\n\n');
         }
@@ -202,6 +422,111 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                         {/* <div className="flex items-center gap-2 mt-1"> ... </div> */}
                     </div>
 
+                    {/* Participants */}
+                    {speakers.size > 0 && (
+                        <div className="mb-6">
+                            <div className="text-xs font-medium text-text-tertiary mb-2">Participants</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                {Array.from(speakers.entries()).map(([channelLabel, info]) => (
+                                    editingSpeaker === channelLabel ? (
+                                        <div key={channelLabel} className="relative" ref={dropdownRef}>
+                                            <input
+                                                ref={editInputRef}
+                                                type="text"
+                                                value={editValue}
+                                                onChange={e => setEditValue(e.target.value)}
+                                                onBlur={() => setTimeout(() => { if (!isSelectingRef.current) handleFinishEdit(); isSelectingRef.current = false; }, 150)}
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter') { e.preventDefault(); handleFinishEdit(); }
+                                                    if (e.key === 'Escape') { e.preventDefault(); handleCancelEdit(); }
+                                                }}
+                                                placeholder={getSpeakerLabel(channelLabel)}
+                                                className="inline-flex px-2.5 py-1 rounded-full text-xs font-medium bg-bg-input border border-border-subtle text-text-primary placeholder-text-tertiary outline-none w-36"
+                                            />
+                                            {showDropdown && (() => {
+                                                const otherSpeakers = Array.from(speakers.entries())
+                                                    .filter(([cl]) => cl !== editingSpeaker)
+                                                    .filter(([cl]) => {
+                                                        if (!editValue.trim()) return true;
+                                                        return getSpeakerLabel(cl).toLowerCase().includes(editValue.trim().toLowerCase());
+                                                    });
+                                                const canCreate = editValue.trim().length > 0 && !personResults.some(p => p.name.toLowerCase() === editValue.trim().toLowerCase());
+                                                const hasContent = otherSpeakers.length > 0 || personResults.length > 0 || canCreate;
+                                                if (!hasContent) return null;
+                                                return (
+                                                    <div className="absolute top-full left-0 mt-1 w-52 bg-bg-elevated border border-border-subtle rounded-lg shadow-xl z-50 overflow-hidden max-h-[200px] overflow-y-auto">
+                                                        {otherSpeakers.length > 0 && (
+                                                            <>
+                                                                <div className="px-3 py-1.5 text-[10px] font-medium text-text-tertiary uppercase tracking-wider">Merge with speaker</div>
+                                                                {otherSpeakers.map(([cl]) => (
+                                                                    <button
+                                                                        key={cl}
+                                                                        onMouseDown={(e) => { e.preventDefault(); isSelectingRef.current = true; handleMergeSpeaker(cl); }}
+                                                                        className="w-full text-left px-3 py-2 text-xs text-text-primary hover:bg-bg-input flex items-center gap-2 transition-colors"
+                                                                    >
+                                                                        <Users size={11} className="text-text-tertiary shrink-0" />
+                                                                        <span className="truncate">{getSpeakerLabel(cl)}</span>
+                                                                    </button>
+                                                                ))}
+                                                            </>
+                                                        )}
+                                                        {personResults.length > 0 && (
+                                                            <>
+                                                                <div className={`px-3 py-1.5 text-[10px] font-medium text-text-tertiary uppercase tracking-wider ${otherSpeakers.length > 0 ? 'border-t border-border-subtle' : ''}`}>Link to person</div>
+                                                                {personResults.map(p => (
+                                                                    <button
+                                                                        key={p.id}
+                                                                        onMouseDown={(e) => { e.preventDefault(); isSelectingRef.current = true; handleSelectPerson(p); }}
+                                                                        className="w-full text-left px-3 py-2 text-xs text-text-primary hover:bg-bg-input flex items-center gap-2 transition-colors"
+                                                                    >
+                                                                        <Link size={11} className="text-text-tertiary shrink-0" />
+                                                                        <span className="truncate">{p.name}</span>
+                                                                    </button>
+                                                                ))}
+                                                            </>
+                                                        )}
+                                                        {canCreate && (
+                                                            <>
+                                                                <div className={`px-3 py-1.5 text-[10px] font-medium text-text-tertiary uppercase tracking-wider ${(otherSpeakers.length > 0 || personResults.length > 0) ? 'border-t border-border-subtle' : ''}`}>Create new person</div>
+                                                                <button
+                                                                    onMouseDown={(e) => { e.preventDefault(); isSelectingRef.current = true; handleCreateAndLink(editValue.trim()); }}
+                                                                    className="w-full text-left px-3 py-2 text-xs text-text-primary hover:bg-bg-input flex items-center gap-2 transition-colors"
+                                                                >
+                                                                    <Plus size={11} className="text-orange-400 shrink-0" />
+                                                                    <span className="truncate">Create "{editValue.trim()}"</span>
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    ) : (
+                                        <div key={channelLabel} className="flex items-center gap-1">
+                                            <button
+                                                onClick={() => handleStartEdit(channelLabel)}
+                                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${getSpeakerColor(channelLabel)} cursor-pointer hover:opacity-80 transition-opacity`}
+                                                title="Click to rename speaker"
+                                            >
+                                                {getSpeakerLabel(channelLabel)}
+                                                {info.person_id && <Link size={10} className="opacity-50" />}
+                                            </button>
+                                            {(info.display_name || info.person_id) && (
+                                                <button
+                                                    onClick={() => handleClearMapping(channelLabel)}
+                                                    className="w-4 h-4 flex items-center justify-center rounded-full hover:bg-red-500/20 text-text-tertiary hover:text-red-400 transition-colors"
+                                                    title="Clear speaker name"
+                                                >
+                                                    <X size={10} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    )
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Tabs */}
                     {/* Designing Tabs to match reference 1:1 (Dark Pill Container) */}
                     <div className="flex items-center justify-between mb-8">
@@ -246,7 +571,8 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                                 {/* Overview - Rendered as Markdown */}
                                 <div className="mb-6 pb-6 border-b border-border-subtle prose prose-sm dark:prose-invert max-w-none">
                                     <ReactMarkdown
-                                        remarkPlugins={[remarkGfm]}
+                                        remarkPlugins={[remarkGfm, remarkMath]}
+                                        rehypePlugins={[rehypeKatex]}
                                         components={{
                                             h1: ({ node, ...props }) => <h1 className="text-xl font-bold text-text-primary mt-4 mb-2" {...props} />,
                                             h2: ({ node, ...props }) => <h2 className="text-lg font-semibold text-text-primary mt-4 mb-2" {...props} />,
@@ -375,8 +701,9 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                                         return filteredTranscript.map((entry, i) => (
                                             <div key={i} className="group">
                                                 <div className="flex items-center gap-2 mb-1">
-                                                    <span className="text-xs font-semibold text-text-secondary">
-                                                        {entry.speaker === 'user' ? 'Me' : 'Them'}
+                                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold ${getSpeakerColor(entry.speaker)}`}>
+                                                        {getSpeakerLabel(entry.speaker)}
+                                                        {speakers.get(entry.speaker)?.person_id && <Link size={9} className="opacity-50" />}
                                                     </span>
                                                     <span className="text-xs text-text-tertiary font-mono">{entry.timestamp ? formatTime(entry.timestamp) : '0:00'}</span>
                                                 </div>

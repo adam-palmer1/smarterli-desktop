@@ -4,7 +4,13 @@ import App from "./App"
 import "./index.css"
 
 // Initialize Theme
-if (window.electronAPI && window.electronAPI.getThemeMode) {
+// Overlay window is always dark mode; other windows follow system/user preference
+const isOverlayWindow = new URLSearchParams(window.location.search).get('window') === 'overlay';
+
+if (isOverlayWindow) {
+  // Force dark mode by removing any light theme attribute
+  document.documentElement.removeAttribute('data-theme');
+} else if (window.electronAPI && window.electronAPI.getThemeMode) {
   window.electronAPI.getThemeMode().then(({ resolved }) => {
     document.documentElement.setAttribute('data-theme', resolved);
   });

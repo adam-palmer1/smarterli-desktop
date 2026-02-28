@@ -49,6 +49,7 @@ import { WindowHelper } from "./WindowHelper"
 import { SettingsWindowHelper } from "./SettingsWindowHelper"
 import { ModelSelectorWindowHelper } from "./ModelSelectorWindowHelper"
 import { TranscriptWindowHelper } from "./TranscriptWindowHelper"
+import { LiveFeedbackWindowHelper } from "./LiveFeedbackWindowHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 
@@ -71,6 +72,7 @@ export class AppState {
   public settingsWindowHelper: SettingsWindowHelper
   public modelSelectorWindowHelper: ModelSelectorWindowHelper
   public transcriptWindowHelper: TranscriptWindowHelper
+  public liveFeedbackWindowHelper: LiveFeedbackWindowHelper
   private screenshotHelper: ScreenshotHelper
   public shortcutsHelper: ShortcutsHelper
 
@@ -96,6 +98,18 @@ export class AppState {
 
   private hasDebugged: boolean = false
   private isMeetingActive: boolean = false; // Guard for session state leaks
+  private isMeetingTransitioning: boolean = false; // Mutex for start/end lifecycle
+  private isMeetingPaused: boolean = false; // Pause state (audio stopped, session alive)
+  private isInputStreamingEnabled: boolean = true;
+  private isOutputStreamingEnabled: boolean = true;
+  private currentInputDeviceId: string | undefined;
+  private currentOutputDeviceId: string | undefined;
+
+  // Live Feedback engine
+  private liveFeedbackClient: IntelligenceClient | null = null;
+  private liveFeedbackDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private liveFeedbackLastTrigger: number = 0;
+  private liveFeedbackTranscriptBuffer: string = '';
 
   // Processing events
   public readonly PROCESSING_EVENTS = {
@@ -119,6 +133,7 @@ export class AppState {
   private systemAudioCapture: SystemAudioCapture | null = null;
   private microphoneCapture: MicrophoneCapture | null = null;
   private audioTestCapture: MicrophoneCapture | null = null; // For audio settings test
+  private audioTestOutputCapture: SystemAudioCapture | null = null; // For output level test
 
   constructor() {
     // Initialize WindowHelper with this
@@ -126,6 +141,7 @@ export class AppState {
     this.settingsWindowHelper = new SettingsWindowHelper()
     this.modelSelectorWindowHelper = new ModelSelectorWindowHelper()
     this.transcriptWindowHelper = new TranscriptWindowHelper()
+    this.liveFeedbackWindowHelper = new LiveFeedbackWindowHelper()
 
     // Initialize ScreenshotHelper
     this.screenshotHelper = new ScreenshotHelper(this.view)
@@ -140,6 +156,10 @@ export class AppState {
     this.serverClient = new ServerClient(SERVER_URL, apiKey, accessToken);
     const refreshToken = cm.getRefreshToken();
     if (refreshToken) this.serverClient.setRefreshToken(refreshToken);
+    this.serverClient.onUnauthorized(() => {
+      console.log('[AppState] 401 Unauthorized — notifying renderer');
+      this.sendToWindow(this.getWindowHelper().getLauncherWindow(), this.PROCESSING_EVENTS.UNAUTHORIZED);
+    });
     console.log('[AppState] ServerClient initialized with URL:', SERVER_URL);
 
     // Initialize ThemeManager
@@ -155,24 +175,24 @@ export class AppState {
 
     autoUpdater.on("checking-for-update", () => {
       console.log("[AutoUpdater] Checking for update...")
-      this.getMainWindow()?.webContents.send("update-checking")
+      this.sendToWindow(this.getMainWindow(), "update-checking")
     })
 
     autoUpdater.on("update-available", (info) => {
       console.log("[AutoUpdater] Update available:", info.version)
       this.updateAvailable = true
       // Notify renderer that an update is available (for optional UI signal)
-      this.getMainWindow()?.webContents.send("update-available", info)
+      this.sendToWindow(this.getMainWindow(), "update-available", info)
     })
 
     autoUpdater.on("update-not-available", (info) => {
       console.log("[AutoUpdater] Update not available:", info.version)
-      this.getMainWindow()?.webContents.send("update-not-available", info)
+      this.sendToWindow(this.getMainWindow(), "update-not-available", info)
     })
 
     autoUpdater.on("error", (err) => {
       console.error("[AutoUpdater] Error:", err)
-      this.getMainWindow()?.webContents.send("update-error", err.message)
+      this.sendToWindow(this.getMainWindow(), "update-error", err.message)
     })
 
     autoUpdater.on("download-progress", (progressObj) => {
@@ -180,13 +200,13 @@ export class AppState {
       log_message = log_message + " - Downloaded " + progressObj.percent + "%"
       log_message = log_message + " (" + progressObj.transferred + "/" + progressObj.total + ")"
       console.log("[AutoUpdater] " + log_message)
-      this.getMainWindow()?.webContents.send("download-progress", progressObj)
+      this.sendToWindow(this.getMainWindow(), "download-progress", progressObj)
     })
 
     autoUpdater.on("update-downloaded", (info) => {
       console.log("[AutoUpdater] Update downloaded:", info.version)
       // Notify renderer that update is ready to install
-      this.getMainWindow()?.webContents.send("update-downloaded", info)
+      this.sendToWindow(this.getMainWindow(), "update-downloaded", info)
     })
 
     // Only skip the automatic check in development
@@ -280,6 +300,8 @@ export class AppState {
 
   private async reconfigureAudio(inputDeviceId?: string, outputDeviceId?: string): Promise<void> {
     console.log(`[Main] Reconfiguring Audio: Input=${inputDeviceId}, Output=${outputDeviceId}`);
+    this.currentInputDeviceId = inputDeviceId;
+    this.currentOutputDeviceId = outputDeviceId;
 
     // 1. System Audio (Output Capture)
     if (this.systemAudioCapture) {
@@ -349,241 +371,527 @@ export class AppState {
   }
 
 
-  public startAudioTest(deviceId?: string): void {
-    console.log(`[Main] Starting Audio Test on device: ${deviceId || 'default'}`);
+  public startAudioTest(inputDeviceId?: string, outputDeviceId?: string): void {
+    console.log(`[Main] Starting Audio Test: input=${inputDeviceId || 'default'}, output=${outputDeviceId || 'default'}`);
     this.stopAudioTest(); // Stop any existing test
 
+    const sendLevel = (channel: string, chunk: Buffer) => {
+      const win = this.getWindowHelper().getLauncherWindow();
+      if (!win || win.isDestroyed()) return;
+      let sum = 0;
+      const step = 10;
+      const len = chunk.length;
+      for (let i = 0; i < len; i += 2 * step) {
+        const val = chunk.readInt16LE(i);
+        sum += val * val;
+      }
+      const count = len / (2 * step);
+      if (count > 0) {
+        const rms = Math.sqrt(sum / count);
+        const level = Math.min(rms / 10000, 1.0);
+        this.sendToWindow(win, 'audio-level', { channel, level });
+      }
+    };
+
+    // Start input (microphone) monitoring
     try {
-      this.audioTestCapture = new MicrophoneCapture(deviceId || undefined);
+      this.audioTestCapture = new MicrophoneCapture(inputDeviceId || undefined);
       this.audioTestCapture.start();
-
-      // Send to settings window if open, else main window
-      const win = this.settingsWindowHelper.getSettingsWindow() || this.getMainWindow();
-
-      this.audioTestCapture.on('data', (chunk: Buffer) => {
-        // Calculate basic RMS for level meter
-        if (!win || win.isDestroyed()) return;
-
-        let sum = 0;
-        const step = 10;
-        const len = chunk.length;
-
-        for (let i = 0; i < len; i += 2 * step) {
-          const val = chunk.readInt16LE(i);
-          sum += val * val;
-        }
-
-        const count = len / (2 * step);
-        if (count > 0) {
-          const rms = Math.sqrt(sum / count);
-          // Normalize 0-1 (heuristic scaling, max comfortable mic input is around 10000-20000)
-          const level = Math.min(rms / 10000, 1.0);
-          win.webContents.send('audio-level', level);
-        }
-      });
-
+      this.audioTestCapture.on('data', (chunk: Buffer) => sendLevel('input', chunk));
       this.audioTestCapture.on('error', (err: Error) => {
-        console.error('[Main] AudioTest Error:', err);
+        console.error('[Main] AudioTest Input Error:', err);
       });
-
     } catch (err) {
-      console.error('[Main] Failed to start audio test:', err);
+      console.error('[Main] Failed to start input audio test:', err);
+    }
+
+    // Start output (system audio) monitoring
+    try {
+      this.audioTestOutputCapture = new SystemAudioCapture(outputDeviceId || undefined);
+      this.audioTestOutputCapture.start();
+      this.audioTestOutputCapture.on('data', (chunk: Buffer) => sendLevel('output', chunk));
+      this.audioTestOutputCapture.on('error', (err: Error) => {
+        console.error('[Main] AudioTest Output Error:', err);
+      });
+    } catch (err) {
+      console.error('[Main] Failed to start output audio test:', err);
     }
   }
 
   public stopAudioTest(): void {
     if (this.audioTestCapture) {
-      console.log('[Main] Stopping Audio Test');
+      console.log('[Main] Stopping Audio Test (input)');
       this.audioTestCapture.stop();
       this.audioTestCapture = null;
+    }
+    if (this.audioTestOutputCapture) {
+      console.log('[Main] Stopping Audio Test (output)');
+      this.audioTestOutputCapture.stop();
+      this.audioTestOutputCapture = null;
     }
   }
 
   public async startMeeting(metadata?: any): Promise<void> {
-    if (this.isMeetingActive) {
-      console.warn('[Main] Meeting already active, ignoring duplicate startMeeting call');
+    if (this.isMeetingActive || this.isMeetingTransitioning) {
+      console.warn('[Main] Meeting already active or transitioning, ignoring duplicate startMeeting call');
       return;
     }
+    this.isMeetingTransitioning = true;
     console.log('[Main] Starting Meeting...', metadata);
 
-    this.isMeetingActive = true;
+    try {
+      this.isMeetingActive = true;
+      // Reset streaming flags to ON for every new meeting
+      this.isInputStreamingEnabled = true;
+      this.isOutputStreamingEnabled = true;
 
-    const cm = CredentialsManager.getInstance();
-    const apiKey = cm.getApiKey();
-    if (!apiKey) {
-      this.isMeetingActive = false;
-      throw new Error('API key not configured');
-    }
-
-    this.currentSessionId = crypto.randomUUID();
-
-    // Reset UI
-    this.getWindowHelper().getOverlayWindow()?.webContents.send('session-reset');
-    this.getWindowHelper().getLauncherWindow()?.webContents.send('session-reset');
-
-    // Setup audio pipeline
-    if (metadata?.audio) {
-      await this.reconfigureAudio(metadata.audio.inputDeviceId, metadata.audio.outputDeviceId);
-    }
-    this.setupSystemAudioPipeline();
-
-    // Connect to server
-    this.audioStreamer = new AudioStreamer(SERVER_URL, apiKey, this.currentSessionId);
-    this.intelligenceClient = new IntelligenceClient(SERVER_URL, apiKey);
-    this.panelClient = new PanelClient(SERVER_URL, apiKey, this.currentSessionId);
-
-    // Set audio sample rates on the streamer from local capture devices
-    const sysRate = this.systemAudioCapture?.getSampleRate() || 16000;
-    this.audioStreamer.setSampleRate(sysRate);
-
-    // Wire audio streamer events
-    this.audioStreamer.on('transcript', (data) => {
-      const payload = {
-        speaker: data.speaker,
-        text: data.text,
-        timestamp: data.timestamp,
-        final: data.is_final,
-        confidence: data.confidence
-      };
-      this.getWindowHelper().getLauncherWindow()?.webContents.send('native-audio-transcript', payload);
-      this.getWindowHelper().getOverlayWindow()?.webContents.send('native-audio-transcript', payload);
-      this.transcriptWindowHelper.sendTranscript(payload);
-    });
-
-    this.audioStreamer.on('session-started', (data) => {
-      console.log('[Main] Audio session started:', data.session_id, 'meeting:', data.meeting_id);
-    });
-
-    this.audioStreamer.on('session-terminated', (data) => {
-      console.log('[Main] Audio session terminated, total seconds:', data.total_seconds);
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) w.webContents.send('session-terminated', data);
-      });
-    });
-
-    this.audioStreamer.on('credit-update', (data) => {
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) w.webContents.send('credit-update', data);
-      });
-    });
-
-    this.audioStreamer.on('credit-exhausted', () => {
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) w.webContents.send('credit-exhausted');
-      });
-    });
-
-    // Wire intelligence client events
-    this.intelligenceClient.on('token', (data) => {
-      const win = this.getMainWindow();
-      if (!win) return;
-
-      // Map mode to IPC channel
-      const modeChannelMap: Record<string, string> = {
-        'what-to-say': 'intelligence-suggested-answer-token',
-        'follow-up': 'intelligence-refined-answer-token',
-        'recap': 'intelligence-recap-token',
-        'follow-up-questions': 'intelligence-follow-up-questions-token',
-        'chat': 'gemini-stream-token',
-        'assist': 'intelligence-assist-update',
-      };
-
-      const channel = modeChannelMap[data.mode];
-      if (channel) {
-        if (data.mode === 'what-to-say') {
-          win.webContents.send(channel, { token: data.token, question: '', confidence: 0.8 });
-        } else if (data.mode === 'follow-up') {
-          win.webContents.send(channel, { token: data.token, intent: '' });
-        } else if (data.mode === 'recap') {
-          win.webContents.send(channel, { token: data.token });
-        } else if (data.mode === 'follow-up-questions') {
-          win.webContents.send(channel, { token: data.token });
-        } else if (data.mode === 'chat') {
-          win.webContents.send(channel, data.token);
-        } else if (data.mode === 'assist') {
-          win.webContents.send(channel, { insight: data.token });
-        }
+      const cm = CredentialsManager.getInstance();
+      const apiKey = cm.getApiKey();
+      if (!apiKey) {
+        this.isMeetingActive = false;
+        throw new Error('API key not configured');
       }
-    });
 
-    // Wire panel client events
-    this.panelClient.on('panel-token', (data) => {
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) w.webContents.send('panel-token', data);
+      this.currentSessionId = crypto.randomUUID();
+
+      // Reset UI
+      this.sendToWindow(this.getWindowHelper().getOverlayWindow(), 'session-reset');
+      this.sendToWindow(this.getWindowHelper().getLauncherWindow(), 'session-reset');
+
+      // Setup audio pipeline
+      if (metadata?.audio) {
+        await this.reconfigureAudio(metadata.audio.inputDeviceId, metadata.audio.outputDeviceId);
+      }
+      this.setupSystemAudioPipeline();
+
+      // Connect to server
+      this.audioStreamer = new AudioStreamer(SERVER_URL, apiKey, this.currentSessionId);
+      this.intelligenceClient = new IntelligenceClient(SERVER_URL, apiKey);
+      this.panelClient = new PanelClient(SERVER_URL, apiKey, this.currentSessionId);
+
+      // Set audio sample rates on the streamer from local capture devices
+      const sysRate = this.systemAudioCapture?.getSampleRate() || 16000;
+      this.audioStreamer.setSampleRate(sysRate);
+
+      // Wire audio streamer events
+      this.audioStreamer.on('transcript', (data) => {
+        const payload = {
+          speaker: data.speaker,
+          text: data.text,
+          timestamp: data.timestamp,
+          final: data.is_final,
+          confidence: data.confidence,
+          person_id: data.person_id,
+          person_name: data.person_name,
+        };
+        this.sendToWindow(this.getWindowHelper().getLauncherWindow(), 'native-audio-transcript', payload);
+        this.sendToWindow(this.getWindowHelper().getOverlayWindow(), 'native-audio-transcript', payload);
+        this.transcriptWindowHelper.sendTranscript(payload);
+
+        // Feed live feedback engine
+        if (data.is_final && this.liveFeedbackWindowHelper.isVisible()) {
+          this.feedLiveFeedback(data.text);
+        }
       });
-    });
 
-    this.panelClient.on('panel-complete', (data) => {
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) w.webContents.send('panel-complete', data);
+      this.audioStreamer.on('session-started', (data) => {
+        console.log('[Main] Audio session started:', data.session_id, 'meeting:', data.meeting_id);
+        const meetingId = data.meeting_id;
+        this.broadcastToAllWindows('meeting-id-updated', meetingId);
       });
-    });
 
-    this.panelClient.on('panel-error', (data) => {
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) w.webContents.send('panel-error', data);
+      this.audioStreamer.on('session-terminated', (data) => {
+        console.log('[Main] Audio session terminated, total seconds:', data.total_seconds);
+        this.broadcastToAllWindows('session-terminated', data);
       });
-    });
 
-    // Connect WebSocket clients
-    await this.audioStreamer.connect();
-    await this.panelClient.connect();
+      this.audioStreamer.on('credit-update', (data) => {
+        this.broadcastToAllWindows('credit-update', data);
+      });
 
-    // Configure active panels on the server
-    const savedPanelIds = cm.getActivePanelIds();
-    if (savedPanelIds.length > 0) {
-      this.panelClient.configurePanels(savedPanelIds);
+      this.audioStreamer.on('credit-exhausted', () => {
+        this.broadcastToAllWindows('credit-exhausted');
+      });
+
+      // Wire intelligence client events
+      this.intelligenceClient.on('token', (data) => {
+        const win = this.getMainWindow();
+        if (!win) return;
+
+        // Map mode to IPC channel
+        const modeChannelMap: Record<string, string> = {
+          'what-to-say': 'intelligence-suggested-answer-token',
+          'follow-up': 'intelligence-refined-answer-token',
+          'recap': 'intelligence-recap-token',
+          'follow-up-questions': 'intelligence-follow-up-questions-token',
+          'chat': 'gemini-stream-token',
+          'assist': 'intelligence-assist-update',
+        };
+
+        const channel = modeChannelMap[data.mode];
+        if (channel) {
+          if (data.mode === 'what-to-say') {
+            this.sendToWindow(win, channel, { token: data.token, question: '', confidence: 0.8 });
+          } else if (data.mode === 'follow-up') {
+            this.sendToWindow(win, channel, { token: data.token, intent: '' });
+          } else if (data.mode === 'recap') {
+            this.sendToWindow(win, channel, { token: data.token });
+          } else if (data.mode === 'follow-up-questions') {
+            this.sendToWindow(win, channel, { token: data.token });
+          } else if (data.mode === 'chat') {
+            this.sendToWindow(win, channel, data.token);
+          } else if (data.mode === 'assist') {
+            this.sendToWindow(win, channel, { insight: data.token });
+          }
+        }
+      });
+
+      // Wire panel client events
+      this.panelClient.on('panel-token', (data) => {
+        this.broadcastToAllWindows('panel-token', data);
+      });
+
+      this.panelClient.on('panel-complete', (data) => {
+        this.broadcastToAllWindows('panel-complete', data);
+      });
+
+      this.panelClient.on('panel-error', (data) => {
+        this.broadcastToAllWindows('panel-error', data);
+      });
+
+      // Connect WebSocket clients
+      await this.audioStreamer.connect();
+      await this.panelClient.connect();
+
+      // Configure active panels on the server
+      const savedPanelIds = cm.getActivePanelIds();
+      if (savedPanelIds.length > 0) {
+        this.panelClient.configurePanels(savedPanelIds);
+      }
+
+      // Start local audio captures (data flows to audioStreamer via event wiring above)
+      // Respect streaming toggle state
+      if (this.isOutputStreamingEnabled) {
+        this.systemAudioCapture?.start();
+      }
+      if (this.isInputStreamingEnabled) {
+        this.microphoneCapture?.start();
+      }
+    } catch (err) {
+      this.isMeetingActive = false;
+      throw err;
+    } finally {
+      this.isMeetingTransitioning = false;
     }
-
-    // Start local audio captures (data flows to audioStreamer via event wiring above)
-    this.systemAudioCapture?.start();
-    this.microphoneCapture?.start();
   }
 
   public async endMeeting(): Promise<void> {
+    if (this.isMeetingTransitioning) {
+      console.warn('[Main] Meeting is transitioning, ignoring endMeeting call');
+      return;
+    }
     console.log('[Main] Ending Meeting...');
+    this.isMeetingTransitioning = true;
     this.isMeetingActive = false; // Block new data immediately
+    this.isMeetingPaused = false;
 
-    // Stop local audio captures
-    this.systemAudioCapture?.stop();
-    this.microphoneCapture?.stop();
+    try {
+      // Stop local audio captures
+      this.systemAudioCapture?.stop();
+      this.microphoneCapture?.stop();
 
-    // End audio streaming session
-    if (this.audioStreamer) {
-      try {
-        await this.audioStreamer.end();
-      } catch (err) {
-        console.error('[Main] Error ending audio streamer:', err);
+      // End audio streaming session
+      if (this.audioStreamer) {
+        try {
+          await this.audioStreamer.end();
+        } catch (err) {
+          console.error('[Main] Error ending audio streamer:', err);
+        }
+        this.audioStreamer.removeAllListeners();
+        this.audioStreamer = null;
       }
-      this.audioStreamer.removeAllListeners();
-      this.audioStreamer = null;
-    }
 
-    // Disconnect panel client
-    if (this.panelClient) {
-      try {
-        await this.panelClient.disconnect();
-      } catch (err) {
-        console.error('[Main] Error disconnecting panel client:', err);
+      // Disconnect panel client
+      if (this.panelClient) {
+        try {
+          await this.panelClient.disconnect();
+        } catch (err) {
+          console.error('[Main] Error disconnecting panel client:', err);
+        }
+        this.panelClient.removeAllListeners();
+        this.panelClient = null;
       }
-      this.panelClient.removeAllListeners();
-      this.panelClient = null;
-    }
 
-    // Clean up intelligence client
-    if (this.intelligenceClient) {
-      this.intelligenceClient.cancel();
-      this.intelligenceClient.removeAllListeners();
-      this.intelligenceClient = null;
-    }
+      // Clean up intelligence client
+      if (this.intelligenceClient) {
+        this.intelligenceClient.cancel();
+        this.intelligenceClient.removeAllListeners();
+        this.intelligenceClient = null;
+      }
 
-    // Reset session
-    this.currentSessionId = null;
+      // Close meeting-related windows (transcript, model selector, live feedback)
+      this.transcriptWindowHelper.close();
+      this.modelSelectorWindowHelper.closeWindow();
+      this.liveFeedbackWindowHelper.close();
+
+      // Clean up live feedback engine
+      if (this.liveFeedbackDebounceTimer) {
+        clearTimeout(this.liveFeedbackDebounceTimer);
+        this.liveFeedbackDebounceTimer = null;
+      }
+      this.liveFeedbackClient?.cancel();
+      this.liveFeedbackClient = null;
+      this.liveFeedbackTranscriptBuffer = '';
+
+      // Reset UI (clear transcript, panels, etc.)
+      this.sendToWindow(this.getWindowHelper().getOverlayWindow(), 'session-reset');
+      this.sendToWindow(this.getWindowHelper().getLauncherWindow(), 'session-reset');
+
+      // Reset session
+      this.currentSessionId = null;
+    } finally {
+      this.isMeetingTransitioning = false;
+    }
   }
 
 
+  public async pauseMeeting(): Promise<void> {
+    if (!this.isMeetingActive || this.isMeetingPaused || this.isMeetingTransitioning) {
+      console.warn('[Main] Cannot pause: not active, already paused, or transitioning');
+      return;
+    }
+    console.log('[Main] Pausing Meeting...');
+    this.isMeetingPaused = true;
+
+    // Stop local audio captures but keep WebSocket connections alive
+    this.systemAudioCapture?.stop();
+    this.microphoneCapture?.stop();
+
+    this.broadcastToAllWindows('meeting-paused');
+  }
+
+  public async resumeMeeting(): Promise<void> {
+    if (!this.isMeetingActive || !this.isMeetingPaused || this.isMeetingTransitioning) {
+      console.warn('[Main] Cannot resume: not active, not paused, or transitioning');
+      return;
+    }
+    console.log('[Main] Resuming Meeting...');
+    this.isMeetingPaused = false;
+
+    // Recreate audio captures — native Rust monitors use single-use consumers
+    // that can't restart after stop, so we must destroy and recreate them.
+    if (this.isInputStreamingEnabled) {
+      if (this.microphoneCapture) {
+        this.microphoneCapture.destroy();
+        this.microphoneCapture.removeAllListeners();
+      }
+      this.microphoneCapture = new MicrophoneCapture(this.currentInputDeviceId);
+      this.microphoneCapture.on('data', (chunk: Buffer) => {
+        this.audioStreamer?.sendMicAudio(chunk);
+      });
+      this.microphoneCapture.on('error', (err: Error) => {
+        console.error('[Main] MicrophoneCapture Error:', err);
+      });
+      this.microphoneCapture.start();
+    }
+    if (this.isOutputStreamingEnabled) {
+      if (this.systemAudioCapture) {
+        this.systemAudioCapture.stop();
+        this.systemAudioCapture.removeAllListeners();
+      }
+      this.systemAudioCapture = new SystemAudioCapture(this.currentOutputDeviceId);
+      this.systemAudioCapture.on('data', (chunk: Buffer) => {
+        this.audioStreamer?.sendSystemAudio(chunk);
+      });
+      this.systemAudioCapture.on('error', (err: Error) => {
+        console.error('[Main] SystemAudioCapture Error:', err);
+      });
+      this.systemAudioCapture.start();
+    }
+
+    this.broadcastToAllWindows('meeting-resumed');
+  }
+
+  public async reconfigureMidMeeting(config?: { inputDeviceId?: string; outputDeviceId?: string }): Promise<void> {
+    if (!this.isMeetingActive) {
+      console.warn('[Main] Cannot reconfigure: no active meeting');
+      return;
+    }
+    console.log('[Main] Reconfiguring audio mid-meeting:', config);
+
+    await this.reconfigureAudio(config?.inputDeviceId, config?.outputDeviceId);
+
+    // If not paused, start the new captures immediately (respecting streaming flags)
+    if (!this.isMeetingPaused) {
+      if (this.isOutputStreamingEnabled) {
+        this.systemAudioCapture?.start();
+      }
+      if (this.isInputStreamingEnabled) {
+        this.microphoneCapture?.start();
+      }
+    }
+  }
+
+  public setInputStreaming(enabled: boolean): void {
+    console.log(`[Main] Input streaming: ${enabled}`);
+    this.isInputStreamingEnabled = enabled;
+    if (!this.isMeetingActive || this.isMeetingPaused) return;
+    if (enabled) {
+      // Recreate mic capture if it was destroyed (native monitor can't restart after stop)
+      if (this.microphoneCapture) {
+        this.microphoneCapture.destroy();
+        this.microphoneCapture.removeAllListeners();
+      }
+      this.microphoneCapture = new MicrophoneCapture(this.currentInputDeviceId);
+      this.microphoneCapture.on('data', (chunk: Buffer) => {
+        this.audioStreamer?.sendMicAudio(chunk);
+      });
+      this.microphoneCapture.on('error', (err: Error) => {
+        console.error('[Main] MicrophoneCapture Error:', err);
+      });
+      this.microphoneCapture.start();
+    } else {
+      this.microphoneCapture?.stop();
+    }
+  }
+
+  public setOutputStreaming(enabled: boolean): void {
+    console.log(`[Main] Output streaming: ${enabled}`);
+    this.isOutputStreamingEnabled = enabled;
+    if (!this.isMeetingActive || this.isMeetingPaused) return;
+    if (enabled) {
+      // Recreate system audio capture (SCK needs fresh stream after stop)
+      if (this.systemAudioCapture) {
+        this.systemAudioCapture.stop();
+        this.systemAudioCapture.removeAllListeners();
+      }
+      this.systemAudioCapture = new SystemAudioCapture(this.currentOutputDeviceId);
+      this.systemAudioCapture.on('data', (chunk: Buffer) => {
+        this.audioStreamer?.sendSystemAudio(chunk);
+      });
+      this.systemAudioCapture.on('error', (err: Error) => {
+        console.error('[Main] SystemAudioCapture Error:', err);
+      });
+      this.systemAudioCapture.start();
+    } else {
+      this.systemAudioCapture?.stop();
+    }
+  }
+
+  // =========================================================================
+  // Live Feedback Engine
+  // =========================================================================
+
+  /**
+   * Feed transcript text into the live feedback engine.
+   * Uses debouncing to avoid flooding — waits for a pause in speech, then triggers.
+   * Minimum interval: 8 seconds between triggers to avoid overlapping streams.
+   */
+  private feedLiveFeedback(text: string): void {
+    this.liveFeedbackTranscriptBuffer += ' ' + text;
+
+    // Clear existing debounce timer
+    if (this.liveFeedbackDebounceTimer) {
+      clearTimeout(this.liveFeedbackDebounceTimer);
+    }
+
+    // Debounce: wait 2 seconds of silence after last final transcript before triggering
+    this.liveFeedbackDebounceTimer = setTimeout(() => {
+      this.triggerLiveFeedback();
+    }, 2000);
+  }
+
+  private async triggerLiveFeedback(): Promise<void> {
+    const now = Date.now();
+    const MIN_INTERVAL = 8000; // Minimum 8s between triggers
+
+    if (now - this.liveFeedbackLastTrigger < MIN_INTERVAL) {
+      return;
+    }
+
+    if (!this.currentSessionId || !this.liveFeedbackClient) {
+      return;
+    }
+
+    if (!this.liveFeedbackWindowHelper.isVisible()) {
+      return;
+    }
+
+    const bufferText = this.liveFeedbackTranscriptBuffer.trim();
+    if (bufferText.length < 15) {
+      // Too short to generate meaningful feedback
+      return;
+    }
+
+    this.liveFeedbackLastTrigger = now;
+    this.liveFeedbackTranscriptBuffer = '';
+
+    console.log('[LiveFeedback] Triggering feedback generation...');
+
+    // Send thinking state
+    const words = bufferText.split(/\s+/).slice(-6).join(' ');
+    this.liveFeedbackWindowHelper.sendThinking(words.length > 30 ? words.substring(0, 30) + '...' : words);
+
+    try {
+      // Use the dedicated live feedback client (separate from main intelligence client)
+      // This calls 'what-to-say' which provides contextual suggestions
+      const feedbackClient = this.liveFeedbackClient;
+      let isFirst = true;
+
+      // Temporarily wire token events to the live feedback window
+      const tokenHandler = (data: { mode: string; token: string }) => {
+        this.liveFeedbackWindowHelper.sendToken(data.token, isFirst);
+        isFirst = false;
+      };
+
+      feedbackClient.on('token', tokenHandler);
+
+      try {
+        const result = await feedbackClient.streamWhatToSay(this.currentSessionId);
+        this.liveFeedbackWindowHelper.sendComplete(result);
+      } finally {
+        feedbackClient.removeListener('token', tokenHandler);
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('[LiveFeedback] Error:', err.message);
+        this.liveFeedbackWindowHelper.sendError(err.message);
+      }
+    }
+  }
+
+  public toggleLiveFeedback(): void {
+    this.liveFeedbackWindowHelper.toggle();
+
+    // Initialize the dedicated feedback client if needed
+    if (!this.liveFeedbackClient && this.intelligenceClient) {
+      const creds = CredentialsManager.getInstance().getAllCredentials();
+      if (creds?.apiKey) {
+        this.liveFeedbackClient = new IntelligenceClient(SERVER_URL, creds.apiKey);
+      }
+    }
+  }
+
   /** No-op -- language detection handled server-side */
   public setRecognitionLanguage(_key: string): void { }
+
+  /** Safely send IPC message to a window, catching errors if window is destroyed */
+  private sendToWindow(win: BrowserWindow | null | undefined, channel: string, ...args: any[]): void {
+    try {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(channel, ...args);
+      }
+    } catch (err) {
+      // Window was destroyed between check and send - safe to ignore
+    }
+  }
+
+  /** Safely broadcast IPC message to all windows */
+  private broadcastToAllWindows(channel: string, ...args: any[]): void {
+    BrowserWindow.getAllWindows().forEach(w => {
+      this.sendToWindow(w, channel, ...args);
+    });
+  }
 
   public static getInstance(): AppState {
     if (!AppState.instance) {
@@ -637,6 +945,8 @@ export class AppState {
   public getScreenshotHelper(): ScreenshotHelper {
     return this.screenshotHelper
   }
+
+
 
   public getProblemInfo(): any {
     return this.problemInfo

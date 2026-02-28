@@ -4,7 +4,6 @@ import path from "node:path"
 import fs from "node:fs"
 import { app } from "electron"
 import { v4 as uuidv4 } from "uuid"
-import screenshot from "screenshot-desktop"
 import util from "util"
 export class ScreenshotHelper {
   private screenshotQueue: string[] = []

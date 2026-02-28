@@ -1,5 +1,3 @@
-import path from 'path';
-
 let NativeModule: any = null;
 
 try {

@@ -12,12 +12,16 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode, ErrorStrategy};
 use ringbuf::traits::Consumer;
 
-pub mod vad; 
+pub mod vad;
 pub mod microphone;
 pub mod speaker;
 pub mod streaming_resampler;
 pub mod audio_config;
 pub mod silence_suppression;
+pub mod echo_cancel;
+pub mod agc;
+pub mod compressor;
+pub mod pre_emphasis;
 
 // Keep old resampler module for compatibility
 pub mod resampler;
@@ -82,14 +86,14 @@ impl SystemAudioCapture {
         let input = if let Some(existing) = self.input.take() {
             existing
         } else {
-            println!("[SystemAudioCapture] Creating ScreenCaptureKit stream...");
+            println!("[SystemAudioCapture] Creating audio capture stream...");
             match speaker::SpeakerInput::new(self.device_id.take()) {
                 Ok(i) => i,
                 Err(e) => {
-                    println!("[SystemAudioCapture] Failed: {}. Trying default...", e);
+                    println!("[SystemAudioCapture] Failed with device: {}. Trying default...", e);
                     match speaker::SpeakerInput::new(None) {
                         Ok(i) => i,
-                        Err(e2) => return Err(napi::Error::from_reason(format!("Failed: {}", e2))),
+                        Err(e2) => return Err(napi::Error::from_reason(format!("Audio capture failed: {}", e2))),
                     }
                 }
             }
@@ -102,63 +106,56 @@ impl SystemAudioCapture {
         
         self.stream = Some(stream);
 
-        // DSP thread with silence suppression
+        // DSP thread - pre-emphasis + compressor/normalizer/gate, no suppression
         self.capture_thread = Some(thread::spawn(move || {
             let mut resampler = StreamingResampler::new(input_sample_rate, 16000.0);
             let mut frame_buffer: Vec<i16> = Vec::with_capacity(FRAME_SAMPLES * 4);
             let mut raw_batch: Vec<f32> = Vec::with_capacity(4096);
-            
-            // Use system audio config (lower threshold for quieter system audio)
-            let mut suppressor = SilenceSuppressor::new(
-                SilenceSuppressionConfig::for_system_audio()
-            );
+            let mut pre_emphasis = pre_emphasis::PreEmphasis::new();
+            let mut processor = compressor::SystemAudioProcessor::new();
 
-            println!("[SystemAudioCapture] DSP thread started (suppression active)");
+            echo_cancel::clear_reference();
+            println!("[SystemAudioCapture] DSP thread started (pre-emphasis + compressor active, AEC ref enabled)");
 
             loop {
                 if stop_signal.load(Ordering::Relaxed) {
                     break;
                 }
-                
+
                 // 1. Drain ring buffer (lock-free)
-                let mut batch_count = 0;
                 while let Some(sample) = consumer.try_pop() {
                     raw_batch.push(sample);
-                    batch_count += 1;
                     if raw_batch.len() >= 480 {
                         break;
                     }
                 }
-                
-                // 2. Resample
+
+                // 2. DSP pipeline on raw f32 samples, then resample
                 if !raw_batch.is_empty() {
+                    pre_emphasis.process(&mut raw_batch);
+                    processor.process(&mut raw_batch);
                     let resampled = resampler.resample(&raw_batch);
                     frame_buffer.extend(resampled);
                     raw_batch.clear();
                 }
 
-                // 3. Process frames with Silence Suppression
+                // 3. Send all frames directly (no VAD gating)
                 while frame_buffer.len() >= FRAME_SAMPLES {
                     let frame: Vec<i16> = frame_buffer.drain(0..FRAME_SAMPLES).collect();
-                    match suppressor.process(&frame) {
-                        FrameAction::Send(audio) => {
-                             tsfn.call(audio, ThreadsafeFunctionCallMode::NonBlocking);
-                        },
-                        FrameAction::SendSilence => {
-                             tsfn.call(generate_silence_frame(FRAME_SAMPLES), ThreadsafeFunctionCallMode::NonBlocking);
-                        },
-                        FrameAction::Suppress => {
-                            // Do nothing (bandwidth saving)
-                        }
-                    }
+
+                    // Push to AEC reference buffer for mic echo cancellation
+                    echo_cancel::push_reference(&frame);
+
+                    // Send every frame - no silence suppression on system audio
+                    tsfn.call(frame, ThreadsafeFunctionCallMode::NonBlocking);
                 }
-                
+
                 // 4. Short sleep
                 if frame_buffer.len() < FRAME_SAMPLES {
                     thread::sleep(Duration::from_millis(DSP_POLL_MS));
                 }
             }
-            
+
             println!("[SystemAudioCapture] DSP thread stopped.");
         }));
 
@@ -246,13 +243,20 @@ impl MicrophoneCapture {
                 SilenceSuppressionConfig::for_microphone()
             );
 
-            println!("[MicrophoneCapture] DSP thread started (suppression active)");
+            // AEC: create echo canceller (falls back to passthrough if init fails)
+            echo_cancel::clear_reference();
+            let mut echo_canceller = echo_cancel::EchoCanceller::new();
+            if echo_canceller.is_some() {
+                println!("[MicrophoneCapture] DSP thread started (suppression + AEC active)");
+            } else {
+                println!("[MicrophoneCapture] DSP thread started (suppression active, AEC unavailable)");
+            }
 
             loop {
                 if stop_signal.load(Ordering::Relaxed) {
                     break;
                 }
-                
+
                 // 1. Drain ring buffer (lock-free)
                 let mut batch_count = 0;
                 while let Some(sample) = consumer.try_pop() {
@@ -262,7 +266,7 @@ impl MicrophoneCapture {
                         break;
                     }
                 }
-                
+
                 // 2. Resample
                 if !raw_batch.is_empty() {
                     let resampled = resampler.resample(&raw_batch);
@@ -270,9 +274,17 @@ impl MicrophoneCapture {
                     raw_batch.clear();
                 }
 
-                // 3. Process frames with Silence Suppression
+                // 3. Process frames: AEC then Silence Suppression
                 while frame_buffer.len() >= FRAME_SAMPLES {
                     let frame: Vec<i16> = frame_buffer.drain(0..FRAME_SAMPLES).collect();
+
+                    // Run AEC to subtract speaker echo from mic input
+                    let frame = if let Some(ref mut ec) = echo_canceller {
+                        ec.process(&frame)
+                    } else {
+                        frame
+                    };
+
                     match suppressor.process(&frame) {
                         FrameAction::Send(audio) => {
                              tsfn.call(audio, ThreadsafeFunctionCallMode::NonBlocking);

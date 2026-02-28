@@ -67,6 +67,13 @@ export class TranscriptWindowHelper {
         }
     }
 
+    public close(): void {
+        if (this.transcriptWindow && !this.transcriptWindow.isDestroyed()) {
+            this.transcriptWindow.close()
+            this.transcriptWindow = null
+        }
+    }
+
     public isVisible(): boolean {
         return !!(this.transcriptWindow && !this.transcriptWindow.isDestroyed() && this.transcriptWindow.isVisible())
     }
@@ -91,7 +98,7 @@ export class TranscriptWindowHelper {
         }
     }
 
-    public sendTranscript(payload: { speaker: string; text: string; final: boolean; timestamp?: number; confidence?: number }): void {
+    public sendTranscript(payload: { speaker: string; text: string; final: boolean; timestamp?: number; confidence?: number; person_id?: string; person_name?: string }): void {
         if (this.transcriptWindow && !this.transcriptWindow.isDestroyed()) {
             this.transcriptWindow.webContents.send('native-audio-transcript', payload)
         }

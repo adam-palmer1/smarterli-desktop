@@ -16,8 +16,5 @@
   "include": [
     "**/*.ts"
   ],
-  "exclude": [
-    "db/seedDemo.ts",
-    "db/test-db.ts"
-  ]
+  "exclude": []
 }

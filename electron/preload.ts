@@ -60,10 +60,13 @@ interface ElectronAPI {
   generateSuggestion: (context: string, lastQuestion: string) => Promise<{ suggestion: string }>
   getInputDevices: () => Promise<Array<{ id: string; name: string }>>
   getOutputDevices: () => Promise<Array<{ id: string; name: string }>>
+  startAudioTest: (inputDeviceId?: string, outputDeviceId?: string) => Promise<{ success: boolean }>
+  stopAudioTest: () => Promise<{ success: boolean }>
+  onAudioLevel: (callback: (data: { channel: string; level: number }) => void) => () => void
 
   // Intelligence Mode IPC
   generateAssist: () => Promise<{ insight: string | null }>
-  generateWhatToSay: (question?: string, imagePath?: string) => Promise<{ answer: string | null; question?: string; error?: string }>
+  generateWhatToSay: (imagePath?: string, model?: string) => Promise<{ answer: string | null; error?: string }>
   generateFollowUp: (intent: string, userRequest?: string) => Promise<{ refined: string | null; intent: string }>
   generateRecap: () => Promise<{ summary: string | null }>
   submitManualQuestion: (question: string) => Promise<{ answer: string | null; question: string }>
@@ -238,11 +241,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   onDebugSuccess: (callback: (data: any) => void) => {
-    ipcRenderer.on("debug-success", (_event, data) => callback(data))
+    const subscription = (_event: any, data: any) => callback(data)
+    ipcRenderer.on("debug-success", subscription)
     return () => {
-      ipcRenderer.removeListener("debug-success", (_event, data) =>
-        callback(data)
-      )
+      ipcRenderer.removeListener("debug-success", subscription)
     }
   },
   onDebugError: (callback: (error: string) => void) => {
@@ -340,7 +342,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getBillingUsage: (days?: number) => ipcRenderer.invoke("get-billing-usage", days),
 
   // Native Audio Service Events
-  onNativeAudioTranscript: createIpcListener<{ speaker: string; text: string; final: boolean }>("native-audio-transcript"),
+  onNativeAudioTranscript: createIpcListener<{ speaker: string; text: string; final: boolean; person_id?: string; person_name?: string }>("native-audio-transcript"),
   onNativeAudioSuggestion: createIpcListener<{ context: string; lastQuestion: string; confidence: number }>("native-audio-suggestion"),
   onNativeAudioConnected: createIpcSignal("native-audio-connected"),
   onNativeAudioDisconnected: createIpcSignal("native-audio-disconnected"),
@@ -353,10 +355,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getNativeAudioStatus: () => ipcRenderer.invoke("native-audio-status"),
   getInputDevices: () => ipcRenderer.invoke("get-input-devices"),
   getOutputDevices: () => ipcRenderer.invoke("get-output-devices"),
+  startAudioTest: (inputDeviceId?: string, outputDeviceId?: string) =>
+    ipcRenderer.invoke("start-audio-test", inputDeviceId, outputDeviceId),
+  stopAudioTest: () => ipcRenderer.invoke("stop-audio-test"),
+  onAudioLevel: createIpcListener<{ channel: string; level: number }>("audio-level"),
 
   // Intelligence Mode IPC
   generateAssist: () => ipcRenderer.invoke("generate-assist"),
-  generateWhatToSay: (question?: string, imagePath?: string) => ipcRenderer.invoke("generate-what-to-say", question, imagePath),
+  generateWhatToSay: (imagePath?: string, model?: string) => ipcRenderer.invoke("generate-what-to-say", imagePath, model),
   generateFollowUp: (intent: string, userRequest?: string) => ipcRenderer.invoke("generate-follow-up", intent, userRequest),
   generateFollowUpQuestions: () => ipcRenderer.invoke("generate-follow-up-questions"),
   generateRecap: () => ipcRenderer.invoke("generate-recap"),
@@ -367,6 +373,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Meeting Lifecycle
   startMeeting: (metadata?: any) => ipcRenderer.invoke("start-meeting", metadata),
   endMeeting: () => ipcRenderer.invoke("end-meeting"),
+  pauseMeeting: () => ipcRenderer.invoke("pause-meeting"),
+  resumeMeeting: () => ipcRenderer.invoke("resume-meeting"),
+  reconfigureAudioMidMeeting: (config?: { inputDeviceId?: string; outputDeviceId?: string }) => ipcRenderer.invoke("reconfigure-audio-mid-meeting", config),
+  setInputStreaming: (enabled: boolean) => ipcRenderer.invoke("set-input-streaming", enabled),
+  setOutputStreaming: (enabled: boolean) => ipcRenderer.invoke("set-output-streaming", enabled),
+  onMeetingPaused: createIpcSignal("meeting-paused"),
+  onMeetingResumed: createIpcSignal("meeting-resumed"),
   getRecentMeetings: () => ipcRenderer.invoke("get-recent-meetings"),
   getMeetingDetails: (id: string) => ipcRenderer.invoke("get-meeting-details", id),
   updateMeetingTitle: (id: string, title: string) => ipcRenderer.invoke("update-meeting-title", { id, title }),
@@ -374,6 +387,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteMeeting: (id: string) => ipcRenderer.invoke("delete-meeting", id),
 
   onMeetingsUpdated: createIpcSignal("meetings-updated"),
+  onMeetingIdUpdated: createIpcListener<string>("meeting-id-updated"),
 
   // Window Mode
   setWindowMode: (mode: 'launcher' | 'overlay') => ipcRenderer.invoke("set-window-mode", mode),
@@ -468,6 +482,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Transcript Panel
   toggleTranscriptPanel: () => ipcRenderer.invoke('toggle-transcript-window'),
 
+  // Live Feedback
+  toggleLiveFeedback: () => ipcRenderer.invoke('toggle-live-feedback'),
+
   // Panel Management
   getPanelConfigs: () => ipcRenderer.invoke('get-panel-configs'),
   getActivePanelIds: () => ipcRenderer.invoke('get-active-panel-ids'),
@@ -479,10 +496,36 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onPanelComplete: createIpcListener<{ panelId: string; content: string }>('panel-complete'),
   onPanelError: createIpcListener<{ panelId: string; error: string }>('panel-error'),
 
-  // Speaker Rename
-  renameSpeaker: (original: string, displayName: string) => ipcRenderer.invoke('rename-speaker', { original, displayName }),
+  // Speaker Management
+  getMeetingSpeakers: (meetingId: string) => ipcRenderer.invoke('get-meeting-speakers', meetingId),
+  renameSpeaker: (meetingId: string, speakerId: string, displayName?: string, personId?: string) => ipcRenderer.invoke('rename-speaker', { meetingId, speakerId, displayName, personId }),
+  unlinkSpeakerPerson: (meetingId: string, speakerId: string) => ipcRenderer.invoke('unlink-speaker-person', { meetingId, speakerId }),
   getSpeakerMappings: () => ipcRenderer.invoke('get-speaker-mappings'),
   onSpeakerMappingsUpdated: createIpcListener<Array<{ original: string; displayName: string }>>('speaker-mappings-updated'),
+
+  // Person Management
+  searchPersons: (search?: string, limit?: number) => ipcRenderer.invoke('search-persons', { search, limit }),
+  createPerson: (name: string, email?: string) => ipcRenderer.invoke('create-person', { name, email }),
+  updatePerson: (id: string, updates: { name?: string; email?: string; notes?: string }) => ipcRenderer.invoke('update-person', { id, updates }),
+  deletePerson: (id: string) => ipcRenderer.invoke('delete-person', id),
+
+  // Voiceprint Management
+  getPersonVoiceprints: (personId: string) => ipcRenderer.invoke('get-person-voiceprints', personId),
+  enrollVoiceprint: (personId: string, meetingId: string, speakerLabel: string) => ipcRenderer.invoke('enroll-voiceprint', { personId, meetingId, speakerLabel }),
+  deleteVoiceprint: (voiceprintId: string) => ipcRenderer.invoke('delete-voiceprint', voiceprintId),
+
+  // User Profile
+  updateUserProfile: (updates: { display_name?: string }) => ipcRenderer.invoke('update-user-profile', updates),
+  getUserProfile: () => ipcRenderer.invoke('get-user-profile'),
+
+  // Generic event listener (used by LiveFeedbackPanel, etc.)
+  on: (channel: string, callback: (...args: any[]) => void) => {
+    const subscription = (_event: any, ...args: any[]) => callback(_event, ...args);
+    ipcRenderer.on(channel, subscription);
+    return () => {
+      ipcRenderer.removeListener(channel, subscription);
+    };
+  },
 
   // Generic invoke passthrough (used by SmarterliInterface for settings, model-selector, etc.)
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),

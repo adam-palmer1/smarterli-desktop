@@ -1,12 +1,7 @@
-export interface Solution {
-  initial_thoughts: string[]
-  thought_steps: string[]
-  description: string
-  code: string
-}
+export type { Solution } from './index';
 
 export interface SolutionsResponse {
-  [key: string]: Solution
+  [key: string]: import('./index').Solution
 }
 
 export interface ProblemStatementData {

@@ -66,7 +66,7 @@ export interface MeetingDetail {
   calendar_event_id: string | null;
   source: string | null;
   is_processed: boolean;
-  speaker_mappings_json: any | null;
+  speakers: CallSpeakerItem[];
   transcripts: Array<{
     id: number;
     speaker: string;
@@ -74,6 +74,7 @@ export interface MeetingDetail {
     timestamp_ms: number;
     is_final: boolean;
     confidence: number | null;
+    speaker_display_name: string | null;
   }>;
   ai_interactions: Array<{
     id: number;
@@ -97,6 +98,32 @@ export interface UserInfo {
   is_admin: boolean;
 }
 
+export interface PersonItem {
+  id: string;
+  name: string;
+  email: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface VoiceprintItem {
+  id: string;
+  person_id: string;
+  meeting_id: string | null;
+  speaker_label: string | null;
+  created_at: string;
+}
+
+export interface CallSpeakerItem {
+  id: string;
+  channel_label: string;
+  display_name: string | null;
+  person_id: string | null;
+  person_name: string | null;
+  is_self: boolean;
+}
+
 export class ServerClientError extends Error {
   public statusCode: number;
   public responseBody: any;
@@ -109,11 +136,14 @@ export class ServerClientError extends Error {
   }
 }
 
+const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
+
 export class ServerClient {
   private baseUrl: string;
   private apiKey: string | null;
   private accessToken: string | null;
   private refreshToken: string | null;
+  private unauthorizedCallback: (() => void) | null = null;
 
   constructor(baseUrl: string, apiKey?: string, accessToken?: string) {
     // Strip trailing slash
@@ -121,6 +151,13 @@ export class ServerClient {
     this.apiKey = apiKey || null;
     this.accessToken = accessToken || null;
     this.refreshToken = null;
+  }
+
+  /**
+   * Register a callback to be invoked when a 401 Unauthorized response is received.
+   */
+  public onUnauthorized(callback: () => void): void {
+    this.unauthorizedCallback = callback;
   }
 
   // =========================================================================
@@ -329,7 +366,35 @@ export class ServerClient {
    * List all available plans.
    */
   async getPlans(): Promise<PlanInfo[]> {
-    return await this.request('GET', '/billing/plans');
+    return await this.request('GET', '/billing/plans', undefined, false);
+  }
+
+  /**
+   * Create a checkout session for a subscription plan.
+   */
+  async createCheckout(planId: string, successUrl?: string, cancelUrl?: string): Promise<{ checkout_url: string; session_id: string }> {
+    const body: any = { plan_id: planId };
+    if (successUrl) {
+      body.success_url = successUrl;
+    }
+    if (cancelUrl) {
+      body.cancel_url = cancelUrl;
+    }
+    return await this.request('POST', '/billing/checkout', body);
+  }
+
+  /**
+   * Purchase additional credit minutes.
+   */
+  async purchaseCredits(minutes: number, successUrl?: string, cancelUrl?: string): Promise<{ checkout_url: string; session_id: string }> {
+    const body: any = { minutes };
+    if (successUrl) {
+      body.success_url = successUrl;
+    }
+    if (cancelUrl) {
+      body.cancel_url = cancelUrl;
+    }
+    return await this.request('POST', '/billing/purchase', body);
   }
 
   // =========================================================================
@@ -397,6 +462,140 @@ export class ServerClient {
   }
 
   // =========================================================================
+  // Panels
+  // =========================================================================
+
+  /**
+   * Get all available panels (built-in and custom).
+   */
+  async getPanels(): Promise<Array<{ id: string; name: string; description: string; is_custom: boolean }>> {
+    return await this.request('GET', '/panels');
+  }
+
+  /**
+   * Create a new custom panel.
+   */
+  async createCustomPanel(name: string, description: string, promptTemplate: string): Promise<{ id: string; name: string; description: string; prompt_template: string }> {
+    return await this.request('POST', '/panels/custom', {
+      name,
+      description,
+      prompt_template: promptTemplate,
+    });
+  }
+
+  /**
+   * Update an existing custom panel.
+   */
+  async updateCustomPanel(panelId: string, updates: { name?: string; description?: string; prompt_template?: string }): Promise<{ id: string; name: string; description: string; prompt_template: string }> {
+    return await this.request('PUT', `/panels/custom/${panelId}`, updates);
+  }
+
+  /**
+   * Delete a custom panel by ID.
+   */
+  async deleteCustomPanel(panelId: string): Promise<boolean> {
+    try {
+      await this.request('DELETE', `/panels/custom/${panelId}`);
+      return true;
+    } catch (err) {
+      console.error(`[ServerClient] Failed to delete custom panel: ${err}`);
+      return false;
+    }
+  }
+
+  /**
+   * Set the active panels for a session.
+   */
+  async setActivePanels(panelIds: string[], sessionId?: string): Promise<{ panel_ids: string[] }> {
+    const body: any = { panel_ids: panelIds };
+    if (sessionId) {
+      body.session_id = sessionId;
+    }
+    return await this.request('PUT', '/panels/active', body);
+  }
+
+  // =========================================================================
+  // Persons
+  // =========================================================================
+
+  async getPersons(search?: string, limit?: number): Promise<PersonItem[]> {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return await this.request('GET', `/persons${qs ? '?' + qs : ''}`);
+  }
+
+  async createPerson(name: string, email?: string): Promise<PersonItem> {
+    const body: any = { name };
+    if (email) body.email = email;
+    return await this.request('POST', '/persons', body);
+  }
+
+  async updatePerson(id: string, updates: { name?: string; email?: string; notes?: string }): Promise<PersonItem> {
+    return await this.request('PUT', `/persons/${id}`, updates);
+  }
+
+  async deletePerson(id: string): Promise<boolean> {
+    try {
+      await this.request('DELETE', `/persons/${id}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // =========================================================================
+  // Meeting Speakers
+  // =========================================================================
+
+  async getMeetingSpeakers(meetingId: string): Promise<CallSpeakerItem[]> {
+    return await this.request('GET', `/meetings/${meetingId}/speakers`);
+  }
+
+  async updateMeetingSpeaker(meetingId: string, speakerId: string, updates: { display_name?: string; person_id?: string }): Promise<CallSpeakerItem> {
+    return await this.request('PUT', `/meetings/${meetingId}/speakers/${speakerId}`, updates);
+  }
+
+  // =========================================================================
+  // Voiceprints
+  // =========================================================================
+
+  async getPersonVoiceprints(personId: string): Promise<VoiceprintItem[]> {
+    return await this.request('GET', `/voiceprints/persons/${personId}`);
+  }
+
+  async enrollVoiceprint(personId: string, meetingId: string, speakerLabel: string): Promise<VoiceprintItem> {
+    return await this.request('POST', `/voiceprints/persons/${personId}/enroll-from-meeting?meeting_id=${encodeURIComponent(meetingId)}&speaker_label=${encodeURIComponent(speakerLabel)}`);
+  }
+
+  async deleteVoiceprint(voiceprintId: string): Promise<boolean> {
+    try {
+      await this.request('DELETE', `/voiceprints/${voiceprintId}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async unlinkSpeakerPerson(meetingId: string, speakerId: string): Promise<boolean> {
+    try {
+      await this.request('DELETE', `/meetings/${meetingId}/speakers/${speakerId}/link`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // =========================================================================
+  // User Profile
+  // =========================================================================
+
+  async updateProfile(updates: { display_name?: string }): Promise<UserInfo> {
+    return await this.request('PUT', '/auth/me', updates);
+  }
+
+  // =========================================================================
   // Private HTTP Helpers
   // =========================================================================
 
@@ -451,10 +650,15 @@ export class ServerClient {
       init.body = JSON.stringify(body);
     }
 
+    if (DEBUG_NET) {
+      console.log(`[NET] → ${method} ${url}${body !== undefined ? ' ' + JSON.stringify(body).substring(0, 200) : ''}`);
+    }
+
     let response: Response;
     try {
       response = await fetch(url, init);
     } catch (err: any) {
+      if (DEBUG_NET) console.log(`[NET] ✗ ${method} ${url} — Network error: ${err.message}`);
       throw new ServerClientError(
         `Network error connecting to ${url}: ${err.message}`,
         0,
@@ -463,6 +667,7 @@ export class ServerClient {
 
     // Handle 204 No Content (e.g., DELETE responses)
     if (response.status === 204) {
+      if (DEBUG_NET) console.log(`[NET] ← ${method} ${url} 204 No Content`);
       return null;
     }
 
@@ -479,7 +684,17 @@ export class ServerClient {
       responseBody = await response.text();
     }
 
+    if (DEBUG_NET) {
+      const bodyPreview = typeof responseBody === 'string'
+        ? responseBody.substring(0, 300)
+        : JSON.stringify(responseBody)?.substring(0, 300);
+      console.log(`[NET] ← ${method} ${url} ${response.status} ${bodyPreview}`);
+    }
+
     if (!response.ok) {
+      if (response.status === 401 && authenticated && this.unauthorizedCallback) {
+        this.unauthorizedCallback();
+      }
       const detail = responseBody?.detail || responseBody || response.statusText;
       throw new ServerClientError(
         `HTTP ${response.status}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`,

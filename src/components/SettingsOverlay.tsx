@@ -3,10 +3,11 @@ import {
     X, Mic, Speaker, Monitor, Keyboard, LogOut,
     ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
     Camera, RotateCcw, Eye, Layout, MessageSquare, Crop,
-    ChevronDown, Check, BadgeCheck, Power, Palette, Calendar, Sun, Moon, RefreshCw, Info, FlaskConical, Trash2, LayoutGrid, Plus, Pencil
+    ChevronDown, Check, BadgeCheck, Power, Palette, Calendar, Sun, Moon, RefreshCw, Info, FlaskConical, Trash2, LayoutGrid, Plus, Pencil, Users
 } from 'lucide-react';
 import { AboutSection } from './AboutSection';
 import { AIProvidersSettings } from './settings/AIProvidersSettings';
+import { VoiceprintSettings } from './settings/VoiceprintSettings';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface CustomSelectProps {
@@ -217,6 +218,8 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
     const [activeTab, setActiveTab] = useState('general');
     const [openOnLogin, setOpenOnLogin] = useState(false);
     const [themeMode, setThemeMode] = useState<'system' | 'light' | 'dark'>('system');
+    const [displayName, setDisplayName] = useState('');
+    const [displayNameSaved, setDisplayNameSaved] = useState(false);
     const [isThemeDropdownOpen, setIsThemeDropdownOpen] = useState(false);
     const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'uptodate' | 'error'>('idle');
     const themeDropdownRef = React.useRef<HTMLDivElement>(null);
@@ -267,7 +270,8 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
     const [selectedInput, setSelectedInput] = useState('');
     const [selectedOutput, setSelectedOutput] = useState('');
     const [micLevel, setMicLevel] = useState(0);
-    const [useLegacyAudio, setUseLegacyAudio] = useState(false);
+    const [outputLevel, setOutputLevel] = useState(0);
+    const [useSckAudio, setUseSckAudio] = useState(false);
 
     const [calendarStatus, setCalendarStatus] = useState<{ connected: boolean; email?: string }>({ connected: false });
     const [isCalendarsLoading, setIsCalendarsLoading] = useState(false);
@@ -280,11 +284,8 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
     const [panelFormInstruction, setPanelFormInstruction] = useState('');
     const [panelFormColor, setPanelFormColor] = useState('orange');
 
-    const audioContextRef = React.useRef<AudioContext | null>(null);
-    const analyserRef = React.useRef<AnalyserNode | null>(null);
-    const sourceRef = React.useRef<MediaStreamAudioSourceNode | null>(null);
-    const rafRef = React.useRef<number | null>(null);
-    const streamRef = React.useRef<MediaStream | null>(null);
+    const inputLevelSmooth = React.useRef(0);
+    const outputLevelSmooth = React.useRef(0);
 
     // Load stored credentials on mount
 
@@ -336,6 +337,11 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
             if (window.electronAPI?.getThemeMode) {
                 window.electronAPI.getThemeMode().then(({ mode }) => setThemeMode(mode));
             }
+            if (window.electronAPI?.getUserProfile) {
+                window.electronAPI.getUserProfile().then(profile => {
+                    if (profile?.display_name) setDisplayName(profile.display_name);
+                });
+            }
 
             // Load settings
             const loadDevices = async () => {
@@ -380,9 +386,9 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
             };
             loadDevices();
 
-            // Load Legacy Audio pref
-            const savedLegacy = localStorage.getItem('useLegacyAudioBackend') === 'true';
-            setUseLegacyAudio(savedLegacy);
+            // Load SCK Audio pref
+            const savedSck = localStorage.getItem('useSckAudioBackend') === 'true';
+            setUseSckAudio(savedSck);
 
             // Load Calendar Status
             if (window.electronAPI?.getCalendarStatus) {
@@ -401,111 +407,44 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
     // Effect for real-time audio level monitoring
     useEffect(() => {
         if (isOpen && activeTab === 'audio') {
-            let mounted = true;
+            // Start native audio level monitoring
+            inputLevelSmooth.current = 0;
+            outputLevelSmooth.current = 0;
+            window.electronAPI.startAudioTest(selectedInput || undefined, selectedOutput || undefined);
 
-            const startAudio = async () => {
-                try {
-                    // Cleanup previous audio context if it exists
-                    if (audioContextRef.current) {
-                        audioContextRef.current.close();
+            const unsubscribe = window.electronAPI.onAudioLevel(({ channel, level }) => {
+                // level is 0-1 from native, convert to 0-100 with smoothing
+                const targetLevel = Math.min(level * 100, 100);
+
+                if (channel === 'input') {
+                    if (targetLevel > inputLevelSmooth.current) {
+                        inputLevelSmooth.current = inputLevelSmooth.current * 0.5 + targetLevel * 0.5;
+                    } else {
+                        inputLevelSmooth.current = inputLevelSmooth.current * 0.9 + targetLevel * 0.1;
                     }
-
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            deviceId: selectedInput ? { exact: selectedInput } : undefined
-                        }
-                    });
-
-                    streamRef.current = stream;
-
-                    if (!mounted) return;
-
-                    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-                    const analyser = audioContext.createAnalyser();
-                    const source = audioContext.createMediaStreamSource(stream);
-
-                    analyser.fftSize = 256;
-                    source.connect(analyser);
-
-                    audioContextRef.current = audioContext;
-                    analyserRef.current = analyser;
-                    sourceRef.current = source;
-
-                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                    let smoothLevel = 0;
-
-                    const updateLevel = () => {
-                        if (!mounted || !analyserRef.current) return;
-                        // Use Time Domain Data for accurate volume (waveform) instead of frequency
-                        analyserRef.current.getByteTimeDomainData(dataArray);
-
-                        let sum = 0;
-                        for (let i = 0; i < dataArray.length; i++) {
-                            // Convert 0-255 to -1 to 1 range
-                            const value = (dataArray[i] - 128) / 128;
-                            sum += value * value;
-                        }
-
-                        // Calculate RMS
-                        const rms = Math.sqrt(sum / dataArray.length);
-
-                        // Convert to simpler 0-100 range with some boost
-                        // RMS is usually very small (0.01 - 0.5 for normal speech)
-                        // Logarithmic scaling feels more natural for volume
-                        const db = 20 * Math.log10(rms);
-                        // Approximate mapping: -60dB (silence) to 0dB (max) -> 0 to 100
-                        const targetLevel = Math.max(0, Math.min(100, (db + 60) * 2));
-
-                        // Apply smoothing
-                        if (targetLevel > smoothLevel) {
-                            smoothLevel = smoothLevel * 0.7 + targetLevel * 0.3; // Fast attack
-                        } else {
-                            smoothLevel = smoothLevel * 0.95 + targetLevel * 0.05; // Slow decay
-                        }
-
-                        setMicLevel(smoothLevel);
-
-                        rafRef.current = requestAnimationFrame(updateLevel);
-                    };
-
-                    updateLevel();
-                } catch (error) {
-                    console.error("Error accessing microphone:", error);
-                    setMicLevel(0); // Reset level on error
+                    setMicLevel(inputLevelSmooth.current);
+                } else if (channel === 'output') {
+                    if (targetLevel > outputLevelSmooth.current) {
+                        outputLevelSmooth.current = outputLevelSmooth.current * 0.5 + targetLevel * 0.5;
+                    } else {
+                        outputLevelSmooth.current = outputLevelSmooth.current * 0.9 + targetLevel * 0.1;
+                    }
+                    setOutputLevel(outputLevelSmooth.current);
                 }
-            };
-
-            startAudio();
+            });
 
             return () => {
-                mounted = false;
-                if (rafRef.current) cancelAnimationFrame(rafRef.current);
-                if (sourceRef.current) sourceRef.current.disconnect();
-                if (audioContextRef.current) {
-                    audioContextRef.current.close();
-                    audioContextRef.current = null;
-                }
-                if (streamRef.current) {
-                    streamRef.current.getTracks().forEach(track => track.stop());
-                    streamRef.current = null;
-                }
-                setMicLevel(0); // Reset mic level on cleanup
+                unsubscribe();
+                window.electronAPI.stopAudioTest();
+                setMicLevel(0);
+                setOutputLevel(0);
             };
         } else {
-            // Cleanup when closing tab or overlay or switching away from audio tab
-            if (rafRef.current) cancelAnimationFrame(rafRef.current);
-            if (sourceRef.current) sourceRef.current.disconnect(); // Disconnect source as well
-            if (audioContextRef.current) {
-                audioContextRef.current.close();
-                audioContextRef.current = null;
-            }
-            if (streamRef.current) {
-                streamRef.current.getTracks().forEach(track => track.stop());
-                streamRef.current = null;
-            }
+            window.electronAPI.stopAudioTest();
             setMicLevel(0);
+            setOutputLevel(0);
         }
-    }, [isOpen, activeTab, selectedInput]);
+    }, [isOpen, activeTab, selectedInput, selectedOutput]);
 
     return (
         <AnimatePresence>
@@ -567,6 +506,12 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                         <LayoutGrid size={16} /> Panels
                                     </button>
                                     <button
+                                        onClick={() => setActiveTab('voiceprints')}
+                                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${activeTab === 'voiceprints' ? 'bg-bg-item-active text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50'}`}
+                                    >
+                                        <Users size={16} /> People
+                                    </button>
+                                    <button
                                         onClick={() => setActiveTab('about')}
                                         className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${activeTab === 'about' ? 'bg-bg-item-active text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50'}`}
                                     >
@@ -592,6 +537,45 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                         <div className="flex-1 overflow-y-auto bg-bg-main p-8">
                             {activeTab === 'general' && (
                                 <div className="space-y-6 animated fadeIn">
+                                    {/* Profile Section */}
+                                    <div className="space-y-3.5">
+                                        <div>
+                                            <h3 className="text-lg font-bold text-text-primary mb-1">Profile</h3>
+                                            <p className="text-xs text-text-secondary mb-3">This helps the AI identify you in conversations</p>
+                                            <div className="flex items-center gap-3">
+                                                <div className="flex-1">
+                                                    <label className="text-xs text-text-secondary mb-1 block">Your Name</label>
+                                                    <input
+                                                        type="text"
+                                                        value={displayName}
+                                                        onChange={e => { setDisplayName(e.target.value); setDisplayNameSaved(false); }}
+                                                        onBlur={async () => {
+                                                            if (displayName.trim() && window.electronAPI?.updateUserProfile) {
+                                                                await window.electronAPI.updateUserProfile({ display_name: displayName.trim() });
+                                                                setDisplayNameSaved(true);
+                                                                setTimeout(() => setDisplayNameSaved(false), 2000);
+                                                            }
+                                                        }}
+                                                        onKeyDown={async (e) => {
+                                                            if (e.key === 'Enter' && displayName.trim() && window.electronAPI?.updateUserProfile) {
+                                                                await window.electronAPI.updateUserProfile({ display_name: displayName.trim() });
+                                                                setDisplayNameSaved(true);
+                                                                setTimeout(() => setDisplayNameSaved(false), 2000);
+                                                            }
+                                                        }}
+                                                        placeholder="Enter your name"
+                                                        className="w-full bg-bg-input border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-orange-500/50"
+                                                    />
+                                                </div>
+                                                {displayNameSaved && (
+                                                    <span className="text-xs text-emerald-500 font-medium mt-5">Saved</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="h-px bg-border-subtle" />
+
                                     <div className="space-y-3.5">
                                         <div>
                                             <h3 className="text-lg font-bold text-text-primary mb-1">General settings</h3>
@@ -886,6 +870,19 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                                 placeholder="Default Speakers"
                                             />
 
+                                            <div>
+                                                <div className="flex justify-between text-xs text-text-secondary mb-2 px-1">
+                                                    <span>Output Level</span>
+                                                    <span className="text-text-tertiary">All system audio</span>
+                                                </div>
+                                                <div className="h-1.5 bg-bg-input rounded-full overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-blue-500 transition-all duration-100 ease-out"
+                                                        style={{ width: `${outputLevel}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+
                                             <div className="flex justify-end">
                                                 <button
                                                     onClick={async () => {
@@ -944,23 +941,23 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                                         </div>
                                                         <div>
                                                             <div className="flex items-center gap-2 mb-0.5">
-                                                                <h3 className="text-sm font-bold text-text-primary">CoreAudio Backend</h3>
-                                                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-400 uppercase tracking-wide">Beta</span>
+                                                                <h3 className="text-sm font-bold text-text-primary">ScreenCaptureKit Backend</h3>
+                                                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-400 uppercase tracking-wide">Experimental</span>
                                                             </div>
                                                             <p className="text-xs text-text-secondary leading-relaxed max-w-[300px]">
-                                                                Legacy audio capture method. Use only if you experience issues with the default engine.
+                                                                Alternative audio capture method. Use only if CoreAudio Tap doesn't work on your system.
                                                             </p>
                                                         </div>
                                                     </div>
                                                     <div
                                                         onClick={() => {
-                                                            const newState = !useLegacyAudio;
-                                                            setUseLegacyAudio(newState);
-                                                            window.localStorage.setItem('useLegacyAudioBackend', newState ? 'true' : 'false');
+                                                            const newState = !useSckAudio;
+                                                            setUseSckAudio(newState);
+                                                            window.localStorage.setItem('useSckAudioBackend', newState ? 'true' : 'false');
                                                         }}
-                                                        className={`w-11 h-6 rounded-full relative cursor-pointer transition-colors shrink-0 ${useLegacyAudio ? 'bg-orange-500' : 'bg-bg-toggle-switch border border-border-muted'}`}
+                                                        className={`w-11 h-6 rounded-full relative cursor-pointer transition-colors shrink-0 ${useSckAudio ? 'bg-orange-500' : 'bg-bg-toggle-switch border border-border-muted'}`}
                                                     >
-                                                        <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${useLegacyAudio ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                        <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${useSckAudio ? 'translate-x-5' : 'translate-x-0'}`} />
                                                     </div>
                                                 </div>
                                             </div>
@@ -1207,6 +1204,10 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                         </p>
                                     </div>
                                 </div>
+                            )}
+
+                            {activeTab === 'voiceprints' && (
+                                <VoiceprintSettings />
                             )}
 
                             {activeTab === 'about' && (

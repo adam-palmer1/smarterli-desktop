@@ -1,7 +1,7 @@
 use anyhow::Result;
 use cidre::{arc, av, cat, cf, core_audio as ca, ns, os};
 use ringbuf::{traits::{Producer, Split}, HeapProd, HeapRb, HeapCons};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Waker};
 use ca::aggregate_device_keys as agg_keys;
@@ -18,6 +18,7 @@ struct Ctx {
     current_sample_rate: Arc<AtomicU32>,
     consecutive_drops: Arc<AtomicU32>,
     should_terminate: Arc<AtomicBool>,
+    tap_channel_offset: u32, // which channel contains the tapped audio
 }
 
 pub struct SpeakerInput {
@@ -112,23 +113,72 @@ impl SpeakerInput {
                 Ordering::Release,
             );
 
-            // Extract audio data
-            if let Some(view) =
-                av::AudioPcmBuf::with_buf_list_no_copy(&ctx.format, input_data, None)
-            {
-                if let Some(data) = view.data_f32_at(0) {
-                     process_audio_data(ctx, data);
-                }
-            } else if ctx.format.common_format() == av::audio::CommonFormat::PcmF32 {
-                let first_buffer = &input_data.buffers[0];
-                let byte_count = first_buffer.data_bytes_size as usize;
-                let float_count = byte_count / std::mem::size_of::<f32>();
+            // Diagnostic: log buffer layout for first 20 callbacks
+            static DIAG_COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let diag_count = DIAG_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+            let should_diag = diag_count <= 20;
 
-                if float_count > 0 && !first_buffer.data.is_null() {
-                    let data = unsafe {
-                        std::slice::from_raw_parts(first_buffer.data as *const f32, float_count)
+            if should_diag {
+                let nb = input_data.number_buffers;
+                let b0 = &input_data.buffers[0];
+                println!(
+                    "[CoreAudioTap] DIAG: num_buffers={}, buf0: ch={}, bytes={}, data_null={}",
+                    nb, b0.number_channels, b0.data_bytes_size, b0.data.is_null()
+                );
+                // Scan ALL data in buffer 0 for any non-zero
+                if !b0.data.is_null() && b0.data_bytes_size > 0 {
+                    let float_count = b0.data_bytes_size as usize / 4;
+                    let all_data = unsafe {
+                        std::slice::from_raw_parts(b0.data as *const f32, float_count)
                     };
-                    process_audio_data(ctx, data);
+                    let nonzero = all_data.iter().filter(|&&s| s != 0.0).count();
+                    let channels = b0.number_channels.max(1) as usize;
+                    // If interleaved multi-channel, check each channel
+                    if channels > 1 {
+                        let frames = float_count / channels;
+                        for ch in 0..channels {
+                            let ch_nonzero = (0..frames).filter(|&f| all_data[f * channels + ch] != 0.0).count();
+                            let ch_rms: f32 = (0..frames).map(|f| {
+                                let s = all_data[f * channels + ch];
+                                s * s
+                            }).sum::<f32>() / frames.max(1) as f32;
+                            println!(
+                                "[CoreAudioTap] DIAG:   ch{}: nonzero={}/{}, rms={:.6}",
+                                ch, ch_nonzero, frames, ch_rms.sqrt()
+                            );
+                        }
+                    } else {
+                        println!(
+                            "[CoreAudioTap] DIAG:   total nonzero={}/{}", nonzero, float_count
+                        );
+                    }
+                }
+            }
+
+            // Extract audio data - handle interleaved multi-channel from aggregate device
+            let first_buffer = &input_data.buffers[0];
+            let byte_count = first_buffer.data_bytes_size as usize;
+            let float_count = byte_count / std::mem::size_of::<f32>();
+            let channels = first_buffer.number_channels.max(1) as usize;
+
+            if float_count > 0 && !first_buffer.data.is_null() {
+                let all_data = unsafe {
+                    std::slice::from_raw_parts(first_buffer.data as *const f32, float_count)
+                };
+
+                if channels <= 1 {
+                    // Mono - use directly
+                    process_audio_data(ctx, all_data);
+                } else {
+                    // Multi-channel interleaved: extract the tap channel
+                    let tap_ch = ctx.tap_channel_offset as usize;
+                    let frames = float_count / channels;
+                    let mut mono: Vec<f32> = Vec::with_capacity(frames);
+                    for f in 0..frames {
+                        let idx = f * channels + tap_ch.min(channels - 1);
+                        mono.push(all_data[idx]);
+                    }
+                    process_audio_data(ctx, &mono);
                 }
             }
 
@@ -136,6 +186,12 @@ impl SpeakerInput {
         }
 
         let agg_device = ca::AggregateDevice::with_desc(&self.agg_desc)?;
+
+        // Query aggregate device input stream layout before starting
+        if let Ok(sr) = agg_device.actual_sample_rate() {
+            println!("[CoreAudioTap] Aggregate device sample rate: {}", sr);
+        }
+
         let proc_id = agg_device.create_io_proc_id(proc, Some(ctx))?;
         let started_device = ca::device_start(agg_device, Some(proc_id))?;
         println!("[CoreAudioTap] Aggregate device started successfully");
@@ -167,6 +223,7 @@ impl SpeakerInput {
             current_sample_rate: current_sample_rate.clone(),
             consecutive_drops: Arc::new(AtomicU32::new(0)),
             should_terminate: Arc::new(AtomicBool::new(false)),
+            tap_channel_offset: 0, // Will be auto-detected from DIAG logs
         });
 
         // Start!
@@ -184,21 +241,19 @@ impl SpeakerInput {
 
 fn process_audio_data(ctx: &mut Ctx, data: &[f32]) {
     // Debug Logging for signal analysis
-    static mut LOG_COUNTER: usize = 0;
-    unsafe {
-        LOG_COUNTER += 1;
-        if LOG_COUNTER % 100 == 0 { // Log every ~100th callback (approx every 1-2 sec)
-            let mut min = 0.0;
-            let mut max = 0.0;
-            let mut sum_sq = 0.0;
-            for &s in data {
-                if s < min { min = s; }
-                if s > max { max = s; }
-                sum_sq += s * s;
-            }
-            let rms = (sum_sq / data.len() as f32).sqrt();
-            println!("[CoreAudioTap] Chunk: {} samples, Min: {:.4}, Max: {:.4}, RMS: {:.4}", data.len(), min, max, rms);
+    static LOG_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let log_count = LOG_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+    if log_count % 100 == 0 { // Log every ~100th callback (approx every 1-2 sec)
+        let mut min = 0.0;
+        let mut max = 0.0;
+        let mut sum_sq = 0.0;
+        for &s in data {
+            if s < min { min = s; }
+            if s > max { max = s; }
+            sum_sq += s * s;
         }
+        let rms = (sum_sq / data.len() as f32).sqrt();
+        println!("[CoreAudioTap] Chunk: {} samples, Min: {:.4}, Max: {:.4}, RMS: {:.4}", data.len(), min, max, rms);
     }
 
     // Processing Logic

@@ -1,6 +1,4 @@
 import { EventEmitter } from 'events';
-import { app } from 'electron';
-import path from 'path';
 
 // Load the native module
 let NativeModule: any = null;

@@ -6,6 +6,7 @@ import SettingsPopup from "./components/SettingsPopup" // Keeping for legacy/spe
 import Launcher from "./components/Launcher"
 import ModelSelectorWindow from "./components/ModelSelectorWindow"
 import TranscriptPanel from "./components/TranscriptPanel"
+import LiveFeedbackPanel from "./components/LiveFeedbackPanel"
 import SettingsOverlay from "./components/SettingsOverlay"
 import StartupSequence from "./components/StartupSequence"
 import LoginScreen from "./components/LoginScreen"
@@ -21,9 +22,10 @@ const App: React.FC = () => {
   const isOverlayWindow = new URLSearchParams(window.location.search).get('window') === 'overlay';
   const isModelSelectorWindow = new URLSearchParams(window.location.search).get('window') === 'model-selector';
   const isTranscriptWindow = new URLSearchParams(window.location.search).get('window') === 'transcript';
+  const isLiveFeedbackWindow = new URLSearchParams(window.location.search).get('window') === 'live-feedback';
 
   // Default to launcher if not specified (dev mode safety)
-  const isDefault = !isSettingsWindow && !isOverlayWindow && !isModelSelectorWindow && !isTranscriptWindow;
+  const isDefault = !isSettingsWindow && !isOverlayWindow && !isModelSelectorWindow && !isTranscriptWindow && !isLiveFeedbackWindow;
 
   // Initialize Analytics
   useEffect(() => {
@@ -73,6 +75,12 @@ const App: React.FC = () => {
     }).catch(() => {
       setIsAuthenticated(false);
     });
+
+    // Listen for 401 Unauthorized events and show login screen
+    const unsubscribe = window.electronAPI.onUnauthorized(() => {
+      setIsAuthenticated(false);
+    });
+    return unsubscribe;
   }, [isLauncherWindow, isDefault]);
 
   // Handlers
@@ -80,15 +88,15 @@ const App: React.FC = () => {
     try {
       const inputDeviceId = localStorage.getItem('preferredInputDeviceId');
       let outputDeviceId = localStorage.getItem('preferredOutputDeviceId');
-      const useLegacyAudio = localStorage.getItem('useLegacyAudioBackend') === 'true';
+      const useSckAudio = localStorage.getItem('useSckAudioBackend') === 'true';
 
-      // Override output device ID to force SCK if experimental mode is enabled
-      // Default to SCK unless legacy is enabled
-      if (!useLegacyAudio) {
-        console.log("[App] Using ScreenCaptureKit backend (Default).");
+      // Default: CoreAudio Tap (reliable for capturing meeting/system audio)
+      // Optional: Force ScreenCaptureKit via settings toggle
+      if (useSckAudio) {
+        console.log("[App] Using ScreenCaptureKit backend (User Override).");
         outputDeviceId = "sck";
       } else {
-        console.log("[App] Using Legacy CoreAudio backend (User Preference).");
+        console.log("[App] Using CoreAudio Tap backend (Default).");
       }
 
       const result = await window.electronAPI.startMeeting({
@@ -96,6 +104,10 @@ const App: React.FC = () => {
       });
       if (result.success) {
         analytics.trackMeetingStarted();
+        // Reset streaming toggles to ON for every new meeting
+        localStorage.setItem('smarterli_inputStreaming', 'true');
+        localStorage.setItem('smarterli_outputStreaming', 'true');
+        localStorage.setItem('smarterli_noiseCancellation', 'true');
         // Switch to Overlay Mode via IPC
         // The main process handles window switching, but we can reinforce it or just trust main.
         // Actually, main process startMeeting triggers nothing UI-wise unless we tell it to switch window
@@ -155,6 +167,14 @@ const App: React.FC = () => {
     return (
       <div className="h-full min-h-0 w-full overflow-hidden drag-region">
         <TranscriptPanel />
+      </div>
+    );
+  }
+
+  if (isLiveFeedbackWindow) {
+    return (
+      <div className="h-full min-h-0 w-full overflow-hidden">
+        <LiveFeedbackPanel />
       </div>
     );
   }

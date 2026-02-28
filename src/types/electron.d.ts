@@ -51,7 +51,7 @@ export interface ElectronAPI {
   getBillingUsage: (days?: number) => Promise<any[]>
 
   // Native Audio Service Events
-  onNativeAudioTranscript: (callback: (transcript: { speaker: string; text: string; final: boolean }) => void) => () => void
+  onNativeAudioTranscript: (callback: (transcript: { speaker: string; text: string; final: boolean; person_id?: string; person_name?: string }) => void) => () => void
   onNativeAudioSuggestion: (callback: (suggestion: { context: string; lastQuestion: string; confidence: number }) => void) => () => void
   onNativeAudioConnected: (callback: () => void) => () => void
   onNativeAudioDisconnected: (callback: () => void) => () => void
@@ -61,12 +61,15 @@ export interface ElectronAPI {
   generateSuggestion: (context: string, lastQuestion: string) => Promise<{ suggestion: string }>
   getInputDevices: () => Promise<Array<{ id: string; name: string }>>
   getOutputDevices: () => Promise<Array<{ id: string; name: string }>>
+  startAudioTest: (inputDeviceId?: string, outputDeviceId?: string) => Promise<{ success: boolean }>
+  stopAudioTest: () => Promise<{ success: boolean }>
+  onAudioLevel: (callback: (data: { channel: string; level: number }) => void) => () => void
 
   getNativeAudioStatus: () => Promise<{ connected: boolean }>
 
   // Intelligence Mode IPC
   generateAssist: () => Promise<{ insight: string | null }>
-  generateWhatToSay: (question?: string, imagePath?: string) => Promise<{ answer: string | null; question?: string; error?: string }>
+  generateWhatToSay: (imagePath?: string, model?: string) => Promise<{ answer: string | null; error?: string }>
   generateFollowUp: (intent: string, userRequest?: string) => Promise<{ refined: string | null; intent: string }>
   generateFollowUpQuestions: () => Promise<{ questions: string | null }>
   generateRecap: () => Promise<{ summary: string | null }>
@@ -77,6 +80,13 @@ export interface ElectronAPI {
   // Meeting Lifecycle
   startMeeting: (metadata?: any) => Promise<{ success: boolean; error?: string }>
   endMeeting: () => Promise<{ success: boolean; error?: string }>
+  pauseMeeting: () => Promise<{ success: boolean; error?: string }>
+  resumeMeeting: () => Promise<{ success: boolean; error?: string }>
+  reconfigureAudioMidMeeting: (config?: { inputDeviceId?: string; outputDeviceId?: string }) => Promise<{ success: boolean; error?: string }>
+  setInputStreaming: (enabled: boolean) => Promise<{ success: boolean }>
+  setOutputStreaming: (enabled: boolean) => Promise<{ success: boolean }>
+  onMeetingPaused: (callback: () => void) => () => void
+  onMeetingResumed: (callback: () => void) => () => void
   getRecentMeetings: () => Promise<Array<{ id: string; title: string; date: string; duration: string; summary: string }>>
   getMeetingDetails: (id: string) => Promise<any>
   updateMeetingTitle: (id: string, title: string) => Promise<boolean>
@@ -111,6 +121,7 @@ export interface ElectronAPI {
   onModelChanged: (callback: (modelId: string) => void) => () => void;
 
   onMeetingsUpdated: (callback: () => void) => () => void
+  onMeetingIdUpdated: (callback: (meetingId: string) => void) => () => void
 
   // Theme API
   getThemeMode: () => Promise<{ mode: 'system' | 'light' | 'dark', resolved: 'light' | 'dark' }>
@@ -151,6 +162,9 @@ export interface ElectronAPI {
   // Transcript Panel
   toggleTranscriptPanel: () => Promise<void>
 
+  // Live Feedback
+  toggleLiveFeedback: () => Promise<void>
+
   // Panel Management
   getPanelConfigs: () => Promise<Array<{ id: string; name: string; icon: string; systemPrompt: string; instruction: string; isBuiltIn: boolean; color: string }>>
   getActivePanelIds: () => Promise<string[]>
@@ -162,10 +176,27 @@ export interface ElectronAPI {
   onPanelComplete: (callback: (data: { panelId: string; content: string }) => void) => () => void
   onPanelError: (callback: (data: { panelId: string; error: string }) => void) => () => void
 
-  // Speaker Rename
-  renameSpeaker: (original: string, displayName: string) => Promise<{ success: boolean; error?: string }>
+  // Speaker Management
+  getMeetingSpeakers: (meetingId: string) => Promise<Array<{ id: string; channel_label: string; display_name: string | null; person_id: string | null; person_name: string | null; is_self: boolean }>>
+  renameSpeaker: (meetingId: string, speakerId: string, displayName?: string, personId?: string) => Promise<{ success: boolean; error?: string }>
+  unlinkSpeakerPerson: (meetingId: string, speakerId: string) => Promise<{ success: boolean }>
   getSpeakerMappings: () => Promise<Array<{ original: string; displayName: string }>>
   onSpeakerMappingsUpdated: (callback: (mappings: Array<{ original: string; displayName: string }>) => void) => () => void
+
+  // Person Management
+  searchPersons: (search?: string, limit?: number) => Promise<Array<{ id: string; name: string; email: string | null }>>
+  createPerson: (name: string, email?: string) => Promise<{ id: string; name: string } | null>
+  updatePerson: (id: string, updates: { name?: string; email?: string; notes?: string }) => Promise<{ id: string; name: string; email: string | null } | null>
+  deletePerson: (id: string) => Promise<boolean>
+
+  // Voiceprint Management
+  getPersonVoiceprints: (personId: string) => Promise<Array<{ id: string; person_id: string; meeting_id: string | null; speaker_label: string | null; created_at: string }>>
+  enrollVoiceprint: (personId: string, meetingId: string, speakerLabel: string) => Promise<{ id: string; person_id: string; meeting_id: string | null; speaker_label: string | null; created_at: string } | null>
+  deleteVoiceprint: (voiceprintId: string) => Promise<boolean>
+
+  // User Profile
+  updateUserProfile: (updates: { display_name?: string }) => Promise<any>
+  getUserProfile: () => Promise<{ id: string; email: string; display_name: string | null; is_active: boolean } | null>
 }
 
 declare global {

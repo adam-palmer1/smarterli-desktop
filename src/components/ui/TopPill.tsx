@@ -1,16 +1,16 @@
-import { ChevronUp, ChevronDown } from "lucide-react";
+import { Pause, Play } from "lucide-react";
 import icon from "../icon.png";
 
 interface TopPillProps {
-    expanded: boolean;
-    onToggle: () => void;
     onQuit: () => void;
+    isPaused?: boolean;
+    onPauseToggle?: () => void;
 }
 
 export default function TopPill({
-    expanded,
-    onToggle,
     onQuit,
+    isPaused = false,
+    onPauseToggle,
 }: TopPillProps) {
     return (
         <div className="flex justify-center mt-2 select-none z-50">
@@ -19,13 +19,11 @@ export default function TopPill({
           draggable-area
           flex items-center gap-2
           rounded-full
-          bg-[#111111]/70
-          backdrop-blur-[40px] saturate-[180%]
-          border border-glass-border
+          glass-panel
           shadow-lg shadow-black/20
           pl-1.5 pr-1.5 py-1.5
           transition-all duration-300 ease-sculpted
-          hover:bg-[#111111]/85 hover:border-white/10 hover:shadow-xl
+          hover:shadow-xl
         "
             >
                 {/* LOGO BUTTON */}
@@ -33,11 +31,11 @@ export default function TopPill({
                     className="
             w-8 h-8
             rounded-full
-            bg-white/5
+            bg-glass-bg-light
             flex items-center justify-center
             relative overflow-hidden
             interaction-base interaction-press
-            hover:bg-white/5
+            hover:bg-glass-bg-light
           "
                 >
                     <img
@@ -49,32 +47,33 @@ export default function TopPill({
                     />
                 </button>
 
-                {/* CENTER SEGMENT */}
-                <button
-                    onClick={onToggle}
-                    className="
-            flex items-center gap-2
-            group
-            px-4 py-1.5
-            rounded-full
-            bg-white/5
-            text-[12px]
-            font-medium
-            text-slate-200
-            border border-white/0
-            interaction-base interaction-hover interaction-press
-            hover:bg-white/10 hover:border-white/5 hover:text-white
-          "
-                >
-                    <span className="opacity-70 group-hover:opacity-100 transition-opacity duration-200">
-                        {expanded ? (
-                            <ChevronUp className="w-3.5 h-3.5" />
+                {/* PAUSE / RESUME BUTTON */}
+                {onPauseToggle && (
+                    <button
+                        onClick={onPauseToggle}
+                        className={`
+              w-8 h-8
+              rounded-full
+              flex items-center justify-center
+              interaction-base interaction-press
+              ${isPaused
+                                ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
+                                : 'bg-glass-bg-light text-text-secondary hover:bg-white/10 hover:text-text-primary'
+                            }
+            `}
+                        title={isPaused ? "Resume" : "Pause"}
+                    >
+                        {isPaused ? (
+                            <>
+                                <Play className="w-3.5 h-3.5" />
+                                {/* Amber pulsing indicator */}
+                                <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                            </>
                         ) : (
-                            <ChevronDown className="w-3.5 h-3.5" />
+                            <Pause className="w-3.5 h-3.5" />
                         )}
-                    </span>
-                    <span className="tracking-wide opacity-80 group-hover:opacity-100">{expanded ? "Hide" : "Show"}</span>
-                </button>
+                    </button>
+                )}
 
                 {/* STOP / QUIT BUTTON */}
                 <button
@@ -82,9 +81,9 @@ export default function TopPill({
                     className="
             w-8 h-8
             rounded-full
-            bg-white/5
+            bg-glass-bg-light
             flex items-center justify-center
-            text-white
+            text-text-secondary
             interaction-base interaction-press
             hover:bg-red-500/10 hover:text-red-400
           "

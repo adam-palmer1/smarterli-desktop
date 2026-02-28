@@ -1,7 +1,7 @@
 /**
  * PanelClient - WebSocket client for real-time panel updates.
  *
- * Connects to: WS /ws/panels/{session_id}?api_key=ck_...
+ * Connects to: WS /panels/ws/{session_id}?api_key=ck_...
  *
  * Server -> Client messages:
  *   { "type": "panel.token",    "panelId": str, "token": str }
@@ -18,6 +18,8 @@
 
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
+
+const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
@@ -223,6 +225,10 @@ export class PanelClient extends EventEmitter {
     try {
       const message = JSON.parse(data.toString());
       const msgType = message.type;
+
+      if (DEBUG_NET) {
+        console.log(`[NET] ← WS panel: ${JSON.stringify(message).substring(0, 300)}`);
+      }
 
       switch (msgType) {
         case 'panel.token':
