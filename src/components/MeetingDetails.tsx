@@ -165,10 +165,7 @@ const MeetingDetails: React.FC<MeetingDetailsProps> = ({ meeting: initialMeeting
         editHandledRef.current = true;
         const speakerInfo = speakers.get(editingSpeaker);
         if (speakerInfo) {
-            const voiceprint = await window.electronAPI.enrollVoiceprint(person.id, meeting.id, speakerInfo.channel_label);
-            if (!voiceprint) {
-                await window.electronAPI.renameSpeaker(meeting.id, speakerInfo.id, person.name, person.id);
-            }
+            await window.electronAPI.renameSpeaker(meeting.id, speakerInfo.id, person.name, person.id);
             setSpeakers(prev => {
                 const next = new Map(prev);
                 next.set(editingSpeaker!, { ...speakerInfo, display_name: person.name, person_id: person.id, person_name: person.name });
@@ -187,10 +184,7 @@ const MeetingDetails: React.FC<MeetingDetailsProps> = ({ meeting: initialMeeting
         if (!speakerInfo) return;
         const person = await window.electronAPI.createPerson(name);
         if (!person) return;
-        const voiceprint = await window.electronAPI.enrollVoiceprint(person.id, meeting.id, speakerInfo.channel_label);
-        if (!voiceprint) {
-            await window.electronAPI.renameSpeaker(meeting.id, speakerInfo.id, person.name, person.id);
-        }
+        await window.electronAPI.renameSpeaker(meeting.id, speakerInfo.id, person.name, person.id);
         setSpeakers(prev => {
             const next = new Map(prev);
             next.set(editingSpeaker!, { ...speakerInfo, display_name: person.name, person_id: person.id, person_name: person.name });
@@ -253,11 +247,7 @@ const MeetingDetails: React.FC<MeetingDetailsProps> = ({ meeting: initialMeeting
 
         try {
             if (targetInfo.person_id) {
-                // Target is linked to a person — link source to same person via voiceprint
-                const voiceprint = await window.electronAPI.enrollVoiceprint(targetInfo.person_id, meeting.id, sourceInfo.channel_label);
-                if (!voiceprint) {
-                    await window.electronAPI.renameSpeaker(meeting.id, sourceInfo.id, targetName, targetInfo.person_id);
-                }
+                await window.electronAPI.renameSpeaker(meeting.id, sourceInfo.id, targetName, targetInfo.person_id);
                 setSpeakers(prev => {
                     const next = new Map(prev);
                     next.set(editingSpeaker!, { ...sourceInfo, display_name: targetName, person_id: targetInfo.person_id, person_name: targetInfo.person_name });
