@@ -431,6 +431,62 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   // ==========================================
+  // Meeting Bot
+  // ==========================================
+
+  safeHandle("dispatch-meeting-bot", async (_, args: {
+    meetingUrl: string;
+    platform?: string;
+    scheduledTime?: string;
+    botName?: string;
+  }) => {
+    const client = appState.getServerClient();
+    if (!client) return { success: false, error: "Not connected" };
+    try {
+      const result = await client.dispatchBot(
+        args.meetingUrl,
+        args.platform,
+        args.scheduledTime,
+        args.botName,
+      );
+      return { success: true, ...result };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle("get-bot-status", async (_, sessionId: string) => {
+    const client = appState.getServerClient();
+    if (!client) return null;
+    try {
+      return await client.getBotStatus(sessionId);
+    } catch {
+      return null;
+    }
+  });
+
+  safeHandle("stop-meeting-bot", async (_, sessionId: string) => {
+    const client = appState.getServerClient();
+    if (!client) return { success: false, error: "Not connected" };
+    try {
+      await client.stopBot(sessionId);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle("list-bot-sessions", async () => {
+    const client = appState.getServerClient();
+    if (!client) return [];
+    try {
+      return await client.listBotSessions();
+    } catch {
+      return [];
+    }
+  });
+
+  // ==========================================
   // Stored Credentials
   // ==========================================
 

@@ -197,6 +197,32 @@ export interface ElectronAPI {
   // User Profile
   updateUserProfile: (updates: { display_name?: string }) => Promise<any>
   getUserProfile: () => Promise<{ id: string; email: string; display_name: string | null; is_active: boolean } | null>
+
+  // Meeting Bot
+  dispatchMeetingBot: (args: {
+    meetingUrl: string;
+    platform?: string;
+    scheduledTime?: string;
+    botName?: string;
+  }) => Promise<{ success: boolean; session_id?: string; status?: string; error?: string }>
+  getBotStatus: (sessionId: string) => Promise<{
+    session_id: string;
+    status: string;
+    platform?: string;
+    participant_count?: number;
+    duration_s?: number;
+    error_message?: string;
+  } | null>
+  stopMeetingBot: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+  listBotSessions: () => Promise<Array<{
+    session_id: string;
+    meeting_url: string;
+    platform: string;
+    status: string;
+    started_at?: string;
+    ended_at?: string;
+  }>>
+  onBotStatusUpdate: (callback: (data: { session_id: string; status: string; participant_count?: number }) => void) => () => void
 }
 
 declare global {

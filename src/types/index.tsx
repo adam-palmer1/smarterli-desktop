@@ -11,3 +11,26 @@ export interface Solution {
   description: string
   code: string
 }
+
+// ─── Meeting Bot Types ──────────────────────────────────────
+
+export type MeetingMode = "transparent" | "bot"
+
+export type BotStatus = "scheduling" | "joining" | "in_meeting" | "ended" | "error"
+
+export type MeetingPlatform = "google_meet" | "microsoft_teams" | "zoom"
+
+export interface BotSessionInfo {
+  session_id: string
+  status: BotStatus
+  platform?: MeetingPlatform
+  participant_count?: number
+  duration_s?: number
+  error_message?: string
+}
+
+export interface DispatchBotResult {
+  session_id: string
+  status: BotStatus
+  message: string
+}

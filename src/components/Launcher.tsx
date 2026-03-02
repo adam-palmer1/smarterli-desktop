@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ToggleLeft, ToggleRight, Search, Zap, Calendar, ArrowRight, ArrowLeft, MoreVertical, Globe, Clock, ChevronRight, Settings, RefreshCw, Plus, Mail, Link as LinkIcon, ChevronDown, Trash2, Bell, Check, Download } from 'lucide-react';
+import { ToggleLeft, ToggleRight, Search, Zap, Calendar, ArrowRight, ArrowLeft, MoreVertical, Globe, Clock, ChevronRight, Settings, RefreshCw, Plus, Mail, Link as LinkIcon, ChevronDown, Trash2, Bell, Check, Download, Bot, Loader2, Monitor } from 'lucide-react';
 import { generateMeetingPDF } from '../utils/pdfGenerator';
 import icon from "./icon.png";
 import mainui from "../UI_comp/mainui.png";
@@ -101,6 +101,77 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
     // Global search state (for AI chat overlay)
     const [isGlobalChatOpen, setIsGlobalChatOpen] = useState(false);
     const [submittedGlobalQuery, setSubmittedGlobalQuery] = useState('');
+
+    // Meeting bot state
+    const [meetingMode, setMeetingMode] = useState<'transparent' | 'bot'>('transparent');
+    const [botMeetingUrl, setBotMeetingUrl] = useState('');
+    const [botStatus, setBotStatus] = useState<string | null>(null);
+    const [botSessionId, setBotSessionId] = useState<string | null>(null);
+    const [botError, setBotError] = useState<string | null>(null);
+    const [isBotDispatching, setIsBotDispatching] = useState(false);
+
+    // Auto-detect platform from URL
+    const detectedPlatform = (() => {
+        const url = botMeetingUrl.toLowerCase();
+        if (url.includes('meet.google.com')) return 'google_meet';
+        if (url.includes('teams.microsoft.com') || url.includes('teams.live.com')) return 'microsoft_teams';
+        if (url.includes('zoom.us') || url.includes('zoom.com')) return 'zoom';
+        return null;
+    })();
+
+    const platformLabel = detectedPlatform === 'google_meet' ? 'Google Meet'
+        : detectedPlatform === 'microsoft_teams' ? 'Teams'
+        : detectedPlatform === 'zoom' ? 'Zoom' : null;
+
+    const handleDispatchBot = async () => {
+        if (!botMeetingUrl.trim()) return;
+        setBotError(null);
+        setIsBotDispatching(true);
+        try {
+            const result = await window.electronAPI.dispatchMeetingBot({
+                meetingUrl: botMeetingUrl.trim(),
+                platform: detectedPlatform || undefined,
+            });
+            if (result.success) {
+                setBotSessionId(result.session_id);
+                setBotStatus(result.status);
+                // Switch to overlay to show transcripts
+                await window.electronAPI.setWindowMode('overlay');
+            } else {
+                setBotError(result.error || 'Failed to dispatch bot');
+            }
+        } catch (err: any) {
+            setBotError(err.message || 'Failed to dispatch bot');
+        } finally {
+            setIsBotDispatching(false);
+        }
+    };
+
+    const handleStopBot = async () => {
+        if (!botSessionId) return;
+        try {
+            await window.electronAPI.stopMeetingBot(botSessionId);
+            setBotStatus('ended');
+            setBotSessionId(null);
+        } catch (err: any) {
+            console.error('Failed to stop bot:', err);
+        }
+    };
+
+    // Poll bot status
+    useEffect(() => {
+        if (!botSessionId || botStatus === 'ended' || botStatus === 'error') return;
+        const interval = setInterval(async () => {
+            const status = await window.electronAPI.getBotStatus(botSessionId);
+            if (status) {
+                setBotStatus(status.status);
+                if (status.status === 'error') {
+                    setBotError(status.error_message || 'Bot error');
+                }
+            }
+        }, 3000);
+        return () => clearInterval(interval);
+    }, [botSessionId, botStatus]);
 
     const fetchMeetings = () => {
         if (window.electronAPI && window.electronAPI.getRecentMeetings) {
@@ -443,6 +514,115 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                             <span className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.1)] text-[20px] leading-none">+ New Conversation</span>
                                         </button>
                                     </div>
+
+                                    {/* Meeting Mode Toggle */}
+                                    <div className="flex items-center gap-2 px-1">
+                                        <button
+                                            onClick={() => setMeetingMode('transparent')}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                                meetingMode === 'transparent'
+                                                    ? 'bg-white/10 text-white border border-white/15'
+                                                    : 'text-text-tertiary hover:text-text-secondary hover:bg-white/5'
+                                            }`}
+                                        >
+                                            <Monitor size={13} />
+                                            Transparent
+                                        </button>
+                                        <button
+                                            onClick={() => setMeetingMode('bot')}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                                meetingMode === 'bot'
+                                                    ? 'bg-white/10 text-white border border-white/15'
+                                                    : 'text-text-tertiary hover:text-text-secondary hover:bg-white/5'
+                                            }`}
+                                        >
+                                            <Bot size={13} />
+                                            Meeting Bot
+                                        </button>
+                                    </div>
+
+                                    {/* Bot Mode UI */}
+                                    {meetingMode === 'bot' && (
+                                        <div className="glass-panel p-5 space-y-4 border border-white/10 bg-gradient-to-br from-blue-500/5 via-transparent to-transparent">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <Bot size={16} className="text-blue-400" />
+                                                <span className="text-sm font-semibold text-text-primary">Meeting Bot Mode</span>
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-bold tracking-wider">BETA</span>
+                                            </div>
+                                            <p className="text-xs text-text-secondary">
+                                                A bot will join the meeting on your behalf and transcribe everything — no need to have your desktop app running during the call.
+                                            </p>
+
+                                            {/* Meeting URL Input */}
+                                            <div className="space-y-2">
+                                                <div className="relative">
+                                                    <input
+                                                        type="text"
+                                                        value={botMeetingUrl}
+                                                        onChange={(e) => { setBotMeetingUrl(e.target.value); setBotError(null); }}
+                                                        placeholder="Paste meeting URL (Google Meet, Teams, or Zoom)"
+                                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all"
+                                                    />
+                                                    {platformLabel && (
+                                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-text-secondary font-medium">
+                                                            {platformLabel}
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {botError && (
+                                                    <p className="text-xs text-red-400">{botError}</p>
+                                                )}
+                                            </div>
+
+                                            {/* Bot Status */}
+                                            {botStatus && botStatus !== 'ended' && (
+                                                <div className="flex items-center gap-2 text-xs">
+                                                    {botStatus === 'joining' && (
+                                                        <>
+                                                            <Loader2 size={14} className="animate-spin text-blue-400" />
+                                                            <span className="text-blue-400">Bot is joining the meeting...</span>
+                                                        </>
+                                                    )}
+                                                    {botStatus === 'in_meeting' && (
+                                                        <>
+                                                            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                                            <span className="text-emerald-400">Bot is in the meeting</span>
+                                                            <button
+                                                                onClick={handleStopBot}
+                                                                className="ml-auto text-red-400 hover:text-red-300 text-xs font-medium"
+                                                            >
+                                                                Stop Bot
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {botStatus === 'error' && (
+                                                        <span className="text-red-400">Bot encountered an error</span>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {/* Dispatch Button */}
+                                            {(!botStatus || botStatus === 'ended' || botStatus === 'error') && (
+                                                <button
+                                                    onClick={handleDispatchBot}
+                                                    disabled={!botMeetingUrl.trim() || isBotDispatching}
+                                                    className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                                                        botMeetingUrl.trim() && !isBotDispatching
+                                                            ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg hover:shadow-blue-600/30 active:scale-[0.99]'
+                                                            : 'bg-white/5 text-text-tertiary cursor-not-allowed'
+                                                    }`}
+                                                >
+                                                    {isBotDispatching ? (
+                                                        <Loader2 size={16} className="animate-spin" />
+                                                    ) : (
+                                                        <Bot size={16} />
+                                                    )}
+                                                    {isBotDispatching ? 'Dispatching Bot...' : 'Send Bot to Meeting'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {/* 2. Hero Section — Full-Width Stacked Glass Cards */}
                                     <div className="space-y-4">

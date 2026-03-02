@@ -588,6 +588,79 @@ export class ServerClient {
   }
 
   // =========================================================================
+  // Meeting Bot
+  // =========================================================================
+
+  /**
+   * Dispatch a meeting bot to join a meeting.
+   */
+  async dispatchBot(
+    meetingUrl: string,
+    platform?: string,
+    scheduledTime?: string,
+    botName?: string,
+  ): Promise<{ session_id: string; status: string; message: string }> {
+    const body: any = { meeting_url: meetingUrl };
+    if (platform) body.platform = platform;
+    if (scheduledTime) body.scheduled_time = scheduledTime;
+    if (botName) body.bot_name = botName;
+    return await this.request('POST', '/meetingbot/join', body);
+  }
+
+  /**
+   * Get the status of a bot session.
+   */
+  async getBotStatus(sessionId: string): Promise<{
+    session_id: string;
+    status: string;
+    platform?: string;
+    participant_count?: number;
+    duration_s?: number;
+    error_message?: string;
+  }> {
+    return await this.request('GET', `/meetingbot/${sessionId}/status`);
+  }
+
+  /**
+   * Tell a bot to leave a meeting.
+   */
+  async stopBot(sessionId: string): Promise<{ status: string; message: string }> {
+    return await this.request('POST', `/meetingbot/${sessionId}/leave`);
+  }
+
+  /**
+   * Schedule a bot to join a meeting at a future time.
+   */
+  async scheduleBot(
+    meetingUrl: string,
+    platform?: string,
+    scheduledTime?: string,
+    botName?: string,
+  ): Promise<{ session_id: string; status: string; message: string }> {
+    const body: any = {
+      meeting_url: meetingUrl,
+      scheduled_time: scheduledTime,
+    };
+    if (platform) body.platform = platform;
+    if (botName) body.bot_name = botName;
+    return await this.request('POST', '/meetingbot/schedule', body);
+  }
+
+  /**
+   * List all bot sessions for the current user.
+   */
+  async listBotSessions(): Promise<Array<{
+    session_id: string;
+    meeting_url: string;
+    platform: string;
+    status: string;
+    started_at?: string;
+    ended_at?: string;
+  }>> {
+    return await this.request('GET', '/meetingbot/sessions');
+  }
+
+  // =========================================================================
   // User Profile
   // =========================================================================
 

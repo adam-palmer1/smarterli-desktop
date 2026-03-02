@@ -479,6 +479,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onRAGStreamComplete: createIpcListener<{ meetingId?: string; global?: boolean }>("rag:stream-complete"),
   onRAGStreamError: createIpcListener<{ meetingId?: string; global?: boolean; error: string }>("rag:stream-error"),
 
+  // Meeting Bot
+  dispatchMeetingBot: (args: {
+    meetingUrl: string;
+    platform?: string;
+    scheduledTime?: string;
+    botName?: string;
+  }) => ipcRenderer.invoke('dispatch-meeting-bot', args),
+  getBotStatus: (sessionId: string) => ipcRenderer.invoke('get-bot-status', sessionId),
+  stopMeetingBot: (sessionId: string) => ipcRenderer.invoke('stop-meeting-bot', sessionId),
+  listBotSessions: () => ipcRenderer.invoke('list-bot-sessions'),
+  onBotStatusUpdate: createIpcListener<{ session_id: string; status: string; participant_count?: number }>('bot-status-update'),
+
   // Transcript Panel
   toggleTranscriptPanel: () => ipcRenderer.invoke('toggle-transcript-window'),
 
