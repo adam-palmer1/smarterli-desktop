@@ -145,8 +145,8 @@ export class WindowHelper {
       movable: true,
       center: true,
       icon: app.isPackaged
-        ? path.join(process.resourcesPath, "smarterli.icns")
-        : path.resolve(__dirname, "../assets/smarterli.icns")
+        ? path.join(process.resourcesPath, "zmi.icns")
+        : path.resolve(__dirname, "../assets/zmi.icns")
     }
 
     console.log(`[WindowHelper] Icon Path: ${launcherSettings.icon}`);

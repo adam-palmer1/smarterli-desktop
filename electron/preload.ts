@@ -37,6 +37,9 @@ interface ElectronAPI {
   analyzeImageFile: (path: string) => Promise<void>
   quitApp: () => Promise<void>
 
+  // URLs
+  getFrontendUrl: () => Promise<string>
+
   // Server Connection
   getStoredCredentials: () => Promise<{ serverUrl: string; hasApiKey: boolean; isConnected: boolean }>
   serverSetApiKey: (key: string) => Promise<{ success: boolean; error?: string }>
@@ -329,6 +332,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
 
+  // URLs
+  getFrontendUrl: () => ipcRenderer.invoke("get-frontend-url"),
+
   // Server Connection
   getStoredCredentials: () => ipcRenderer.invoke("get-stored-credentials"),
   serverSetApiKey: (key: string) => ipcRenderer.invoke("server-set-api-key", key),
@@ -539,6 +545,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     };
   },
 
-  // Generic invoke passthrough (used by SmarterliInterface for settings, model-selector, etc.)
+  // Generic invoke passthrough (used by ZmiInterface for settings, model-selector, etc.)
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
 } as ElectronAPI)

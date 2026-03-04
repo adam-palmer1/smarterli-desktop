@@ -19,7 +19,7 @@
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 
-const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
+const DEBUG_NET = process.env.ZMI_DEBUG_NET === '1';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;

@@ -1,12 +1,12 @@
-# Reverse-Engineering "Invisible Cheating App" - Smarter.li Architecture
+# Reverse-Engineering "Invisible Cheating App" - Zenible Architecture
 
-Everyone saw the viral stunt with "Smarter.li," the invisible app designed to secretly ace coding interviews. The Smarter.li team tore apart the app to see how it works, and turns out, the tech itself is genuinely interesting.
+Everyone saw the viral stunt with "Zenible," the invisible app designed to secretly ace coding interviews. The Zenible team tore apart the app to see how it works, and turns out, the tech itself is genuinely interesting.
 
-![Smarter.li Screenshot](image.png)
+![Zenible Screenshot](image.png)
 
-### How Smarter.li Actually Works (Technical Breakdown)
+### How Zenible Actually Works (Technical Breakdown)
 
-Smarter.li was built using Electron, a desktop app framework based on Chromium and Node.js, to create a transparent, always-on-top overlay:
+Zenible was built using Electron, a desktop app framework based on Chromium and Node.js, to create a transparent, always-on-top overlay:
 
 - **Transparent Window (**`transparent: true`**)** – This Electron BrowserWindow property ensures the background is fully transparent, showing only explicitly rendered content.
 - **Always On Top (**`alwaysOnTop: true`**)** – Electron's flag forces the overlay window to persistently float above all other applications, making it consistently accessible without being covered.
@@ -43,7 +43,7 @@ Advanced implementations use native modules (like node-ffi, robotjs) to capture 
 
 ### Native Audio Intelligence (Rust)
 
-Unlike basic screen wrappers, Smarter.li uses a **Rust-based native module** (via N-API) to capture system audio with near-zero latency. This stream is processed in real-time, fed to Google's Speech-to-Text API, and converted into a "Rolling Transcript" that the AI constantly analyzes.
+Unlike basic screen wrappers, Zenible uses a **Rust-based native module** (via N-API) to capture system audio with near-zero latency. This stream is processed in real-time, fed to Google's Speech-to-Text API, and converted into a "Rolling Transcript" that the AI constantly analyzes.
 
 ### Conversation Intelligence (Rolling Context)
 

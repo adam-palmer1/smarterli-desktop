@@ -1,15 +1,15 @@
 {
-  "name": "smarterli",
+  "name": "zmi",
   "version": "1.1.5",
   "main": "./dist-electron/main.js",
-  "description": "Smarter.li is your AI copilot for every conversation.",
+  "description": "Zenible Meeting Intelligence is your AI copilot for every conversation.",
   "scripts": {
     "clean": "rimraf dist dist-electron",
     "dev": "vite",
     "build": "npm run clean && tsc && vite build",
     "preview": "vite preview",
     "postinstall": "echo 'postinstall done'",
-    "electron:dev": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=development SMARTERLI_DEBUG_NET=1 electron .",
+    "electron:dev": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=development ZMI_DEBUG_NET=1 electron .",
     "electron:build": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=production electron .",
     "app:dev": "concurrently \"npm run dev -- --port 5180\" \"wait-on http://localhost:5180 && npm run electron:dev\"",
     "app:build": "npm run build && tsc -p electron/tsconfig.json && electron-builder",
@@ -21,7 +21,7 @@
   "build": {
     "appId": "com.electron.meeting-notes",
     "afterPack": "./scripts/ad-hoc-sign.js",
-    "productName": "Smarter.li",
+    "productName": "Zenible Meeting Intelligence",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -41,8 +41,8 @@
         "to": "assets/"
       },
       {
-        "from": "assets/smarterli.icns",
-        "to": "smarterli.icns"
+        "from": "assets/zmi.icns",
+        "to": "zmi.icns"
       }
     ],
     "mac": {
@@ -63,7 +63,7 @@
           ]
         }
       ],
-      "icon": "assets/smarterli.icns",
+      "icon": "assets/zmi.icns",
       "identity": null,
       "hardenedRuntime": false
     },
@@ -114,7 +114,7 @@
       {
         "provider": "github",
         "owner": "evinjohnn",
-        "repo": "smarterli",
+        "repo": "zmi",
         "releaseType": "release"
       }
     ]
@@ -179,6 +179,6 @@
     "ws": "^8.19.0"
   },
   "optionalDependencies": {
-    "smarterli-audio": "file:./native-module"
+    "zmi-audio": "file:./native-module"
   }
 }

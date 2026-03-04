@@ -25,7 +25,7 @@ If you see "Unidentified Developer":
 
 If you see "App is damaged":
 1. Move the app to your Applications folder.
-2. Open Terminal and run: `xattr -cr /Applications/Smarter.li.app`
+2. Open Terminal and run: `xattr -cr /Applications/Zenible Meeting Intelligence.app`
 
 ## [1.1.4] - 2026-02-12
 

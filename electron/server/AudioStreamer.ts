@@ -1,7 +1,7 @@
 /**
- * AudioStreamer - WebSocket client for streaming audio to/from the Smarter.li server.
+ * AudioStreamer - WebSocket client for streaming audio to/from the Zenible server.
  *
- * Connects to: WS /ws/audio/{session_id}?api_key=ck_...
+ * Connects to: WS /ws/audio/{session_id} (API key sent via Sec-WebSocket-Protocol subprotocol)
  *
  * Protocol:
  * - Client sends session.start JSON with config
@@ -16,7 +16,7 @@
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 
-const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
+const DEBUG_NET = process.env.ZMI_DEBUG_NET === '1';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
@@ -46,12 +46,18 @@ export interface SessionTerminatedEvent {
   total_seconds: number;
 }
 
+export interface SpeakerMergeEvent {
+  old_speaker: string;
+  new_speaker: string;
+}
+
 export interface AudioStreamerEvents {
   'transcript': (data: TranscriptEvent) => void;
   'credit-update': (data: CreditUpdateEvent) => void;
   'credit-exhausted': () => void;
   'session-started': (data: SessionStartedEvent) => void;
   'session-terminated': (data: SessionTerminatedEvent) => void;
+  'speaker-merge': (data: SpeakerMergeEvent) => void;
   'error': (error: Error) => void;
   'connected': () => void;
   'disconnected': () => void;
@@ -76,13 +82,15 @@ export class AudioStreamer extends EventEmitter {
 
   // Audio config
   private sampleRate: number = 16000;
+  private source: string = 'transparent';
 
-  constructor(serverUrl: string, apiKey: string, sessionId: string) {
+  constructor(serverUrl: string, apiKey: string, sessionId: string, source: string = 'transparent') {
     super();
     // Strip trailing slash from server URL
     this.serverUrl = serverUrl.replace(/\/+$/, '');
     this.apiKey = apiKey;
     this.sessionId = sessionId;
+    this.source = source;
   }
 
   // =========================================================================
@@ -101,7 +109,7 @@ export class AudioStreamer extends EventEmitter {
       console.log(`[AudioStreamer] Connecting to ${wsUrl}`);
 
       try {
-        this.ws = new WebSocket(wsUrl);
+        this.ws = new WebSocket(wsUrl, [this.authSubprotocol()]);
       } catch (err: any) {
         reject(new Error(`Failed to create WebSocket: ${err.message}`));
         return;
@@ -239,6 +247,7 @@ export class AudioStreamer extends EventEmitter {
 
   /**
    * Build the WebSocket URL, converting http(s) to ws(s).
+   * API key is no longer passed as a query parameter — it's sent via subprotocol.
    */
   private buildWsUrl(): string {
     let wsBase = this.serverUrl;
@@ -252,7 +261,14 @@ export class AudioStreamer extends EventEmitter {
       wsBase = 'ws://' + wsBase;
     }
 
-    return `${wsBase}/ws/audio/${this.sessionId}?api_key=${encodeURIComponent(this.apiKey)}`;
+    return `${wsBase}/ws/audio/${this.sessionId}`;
+  }
+
+  /**
+   * Return the subprotocol string used for authentication.
+   */
+  private authSubprotocol(): string {
+    return `auth-${this.apiKey}`;
   }
 
   /**
@@ -267,6 +283,7 @@ export class AudioStreamer extends EventEmitter {
       type: 'session.start',
       config: {
         sample_rate: this.sampleRate,
+        source: this.source,
       },
     };
 
@@ -389,6 +406,13 @@ export class AudioStreamer extends EventEmitter {
             meeting_id: message.meeting_id,
             total_seconds: message.total_seconds,
           } as SessionTerminatedEvent);
+          break;
+
+        case 'speaker.merge':
+          this.emit('speaker-merge', {
+            old_speaker: message.old_speaker,
+            new_speaker: message.new_speaker,
+          } as SpeakerMergeEvent);
           break;
 
         case 'error':

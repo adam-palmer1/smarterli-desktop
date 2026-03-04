@@ -140,10 +140,10 @@ class AnalyticsService {
 
         this.trackEvent('app_opened');
 
-        const hasLaunched = localStorage.getItem('smarterli_has_launched');
+        const hasLaunched = localStorage.getItem('zmi_has_launched');
         if (!hasLaunched) {
             this.trackEvent('first_launch');
-            localStorage.setItem('smarterli_has_launched', 'true');
+            localStorage.setItem('zmi_has_launched', 'true');
         }
     }
 

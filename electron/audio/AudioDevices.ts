@@ -1,7 +1,7 @@
 let NativeModule: any = null;
 
 try {
-    NativeModule = require('smarterli-audio');
+    NativeModule = require('zmi-audio');
 } catch (e) {
     console.error('[AudioDevices] Failed to load native module:', e);
 }

@@ -2,7 +2,7 @@
  * Server communication layer barrel exports.
  *
  * These modules replace direct LLM/STT/DB calls with server proxies,
- * enabling the Electron client to communicate with the Smarter.li server.
+ * enabling the Electron client to communicate with the Zenible server.
  */
 
 export { ServerClient, ServerClientError } from './ServerClient';

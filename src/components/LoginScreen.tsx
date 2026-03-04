@@ -7,8 +7,6 @@ interface LoginScreenProps {
   onConnected: () => void;
 }
 
-const SIGNUP_URL = 'https://app.smarter.li/signup';
-
 const LoginScreen: React.FC<LoginScreenProps> = ({ onConnected }) => {
   const [mode, setMode] = useState<'api-key' | 'email'>('api-key');
   const [apiKey, setApiKey] = useState('');
@@ -67,10 +65,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnected }) => {
     }
   };
 
-  const handleCreateAccount = () => {
-    if (window.electronAPI?.openExternal) {
-      window.electronAPI.openExternal(SIGNUP_URL);
-    }
+  const handleCreateAccount = async () => {
+    const frontendUrl = await window.electronAPI?.getFrontendUrl?.() || 'http://localhost:5180';
+    window.electronAPI?.openExternal(`${frontendUrl}/signup`);
   };
 
   return (
@@ -112,7 +109,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnected }) => {
             <div className="relative">
               <img
                 src={appIcon}
-                alt="Smarter.li"
+                alt="Zenible"
                 className="w-14 h-14 object-contain drop-shadow-[0_0_15px_rgba(232,117,10,0.2)]"
               />
             </div>
@@ -126,7 +123,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onConnected }) => {
             transition={{ delay: 0.3 }}
           >
             <h1 className="text-xl font-semibold text-text-primary tracking-tight mb-1">
-              Connect to Smarter.li
+              Connect to Zenible
             </h1>
             <p className="text-xs text-text-tertiary">
               {mode === 'api-key'

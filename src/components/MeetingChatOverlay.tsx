@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
-import smarterliIcon from './icon.png';
+import zmiIcon from './icon.png';
 
 // ============================================
 // Types 
@@ -450,7 +450,7 @@ ${contextString}`;
                         {/* Header with close button */}
                         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
                             <div className="flex items-center gap-2 text-text-tertiary">
-                                <img src={smarterliIcon} className="w-3.5 h-3.5 brightness-0 dark:brightness-100 dark:opacity-50 dark:grayscale" alt="logo" />
+                                <img src={zmiIcon} className="w-3.5 h-3.5 brightness-0 dark:brightness-100 dark:opacity-50 dark:grayscale" alt="logo" />
                                 <span className="text-[13px] font-medium">Search this meeting</span>
                             </div>
                             <button

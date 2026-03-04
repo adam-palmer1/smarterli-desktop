@@ -17,13 +17,13 @@ const SettingsPopup = () => {
     }, []);
 
     const [showTranscript, setShowTranscript] = useState(() => {
-        const stored = localStorage.getItem('smarterli_interviewer_transcript');
+        const stored = localStorage.getItem('zmi_interviewer_transcript');
         return stored !== 'false'; // Default to true if not set
     });
 
     useEffect(() => {
         const handleStorage = () => {
-            const stored = localStorage.getItem('smarterli_interviewer_transcript');
+            const stored = localStorage.getItem('zmi_interviewer_transcript');
             setShowTranscript(stored !== 'false');
         };
 
@@ -83,7 +83,7 @@ const SettingsPopup = () => {
                         onClick={() => {
                             const newState = !showTranscript;
                             setShowTranscript(newState);
-                            localStorage.setItem('smarterli_interviewer_transcript', String(newState));
+                            localStorage.setItem('zmi_interviewer_transcript', String(newState));
                             // Dispatch event for same-window listeners
                             window.dispatchEvent(new Event('storage'));
                         }}
@@ -95,7 +95,7 @@ const SettingsPopup = () => {
 
                 <div className="h-px bg-white/[0.04] my-0.5 mx-2" />
 
-                {/* Show/Hide Smarter.li */}
+                {/* Show/Hide Zenible */}
                 <div className="flex items-center justify-between px-3 py-2 hover:bg-white/5 rounded-lg transition-colors duration-200 group cursor-pointer interaction-base interaction-press">
                     <div className="flex items-center gap-3">
                         <MessageSquare className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors" />

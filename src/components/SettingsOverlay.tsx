@@ -242,14 +242,14 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
     }, [isThemeDropdownOpen]);
 
     const [showTranscript, setShowTranscript] = useState(() => {
-        const stored = localStorage.getItem('smarterli_interviewer_transcript');
+        const stored = localStorage.getItem('zmi_interviewer_transcript');
         return stored !== 'false';
     });
 
     // Sync transcript setting
     useEffect(() => {
         const handleStorage = () => {
-            const stored = localStorage.getItem('smarterli_interviewer_transcript');
+            const stored = localStorage.getItem('zmi_interviewer_transcript');
             setShowTranscript(stored !== 'false');
         };
         window.addEventListener('storage', handleStorage);
@@ -525,7 +525,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                     onClick={() => window.electronAPI.quitApp()}
                                     className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors flex items-center gap-3"
                                 >
-                                    <LogOut size={16} /> Quit Smarter.li
+                                    <LogOut size={16} /> Quit Zenible
                                 </button>
                                 <button onClick={onClose} className="group mt-2 w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50 transition-colors flex items-center gap-3">
                                     <X size={18} className="group-hover:text-red-500 transition-colors" /> Close
@@ -579,7 +579,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                     <div className="space-y-3.5">
                                         <div>
                                             <h3 className="text-lg font-bold text-text-primary mb-1">General settings</h3>
-                                            <p className="text-xs text-text-secondary mb-2">Customize how Smarter.li works for you</p>
+                                            <p className="text-xs text-text-secondary mb-2">Customize how Zenible works for you</p>
 
                                             <div className="space-y-4">
                                                 {/* Open at Login */}
@@ -589,8 +589,8 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                                             <Power size={20} />
                                                         </div>
                                                         <div>
-                                                            <h3 className="text-sm font-bold text-text-primary">Open Smarter.li when you log in</h3>
-                                                            <p className="text-xs text-text-secondary mt-0.5">Smarter.li will open automatically when you log in to your computer</p>
+                                                            <h3 className="text-sm font-bold text-text-primary">Open Zenible when you log in</h3>
+                                                            <p className="text-xs text-text-secondary mt-0.5">Zenible will open automatically when you log in to your computer</p>
                                                         </div>
                                                     </div>
                                                     <div
@@ -620,7 +620,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                                         onClick={() => {
                                                             const newState = !showTranscript;
                                                             setShowTranscript(newState);
-                                                            localStorage.setItem('smarterli_interviewer_transcript', String(newState));
+                                                            localStorage.setItem('zmi_interviewer_transcript', String(newState));
                                                             window.dispatchEvent(new Event('storage'));
                                                         }}
                                                         className={`w-11 h-6 rounded-full relative cursor-pointer transition-colors ${showTranscript ? 'bg-accent-primary' : 'bg-bg-toggle-switch border border-border-muted'}`}
@@ -638,7 +638,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                                         </div>
                                                         <div>
                                                             <h3 className="text-sm font-bold text-text-primary">Theme</h3>
-                                                            <p className="text-xs text-text-secondary mt-0.5">Customize how Smarter.li looks on your device</p>
+                                                            <p className="text-xs text-text-secondary mt-0.5">Customize how Zenible looks on your device</p>
                                                         </div>
                                                     </div>
 
@@ -692,7 +692,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                                         <div>
                                                             <h3 className="text-sm font-bold text-text-primary">Version</h3>
                                                             <p className="text-xs text-text-secondary mt-0.5">
-                                                                You are currently using Smarter.li version 1.0.1.
+                                                                You are currently using Zenible Meeting Intelligence version 1.0.1.
                                                             </p>
                                                         </div>
                                                     </div>
@@ -761,7 +761,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                 <div className="space-y-5 animated fadeIn select-text h-full flex flex-col justify-center">
                                     <div>
                                         <h3 className="text-lg font-bold text-text-primary mb-1">Keyboard shortcuts</h3>
-                                        <p className="text-xs text-text-secondary">Smarter.li works with these easy to remember commands.</p>
+                                        <p className="text-xs text-text-secondary">Zenible works with these easy to remember commands.</p>
                                     </div>
 
                                     <div className="grid gap-6">
@@ -771,7 +771,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                             <div className="space-y-1">
                                                 {[
                                                     { label: 'Toggle Visibility', keys: ['⌘', 'B'], icon: <Eye size={14} /> },
-                                                    { label: 'Show/Center Smarter.li', keys: ['⌘', '⇧', 'Space'], icon: <Layout size={14} /> },
+                                                    { label: 'Show/Center Zenible', keys: ['⌘', '⇧', 'Space'], icon: <Layout size={14} /> },
                                                     { label: 'Process Screenshots', keys: ['⌘', 'Enter'], icon: <MessageSquare size={14} /> },
                                                     { label: 'Reset / Cancel', keys: ['⌘', 'R'], icon: <RotateCcw size={14} /> },
                                                     { label: 'Take Screenshot', keys: ['⌘', 'H'], icon: <Camera size={14} /> },

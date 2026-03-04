@@ -7,7 +7,7 @@ import * as fs from "fs";
 import { AudioDevices } from "./audio/AudioDevices";
 
 import { ENGLISH_VARIANTS } from "./config/languages"
-import { SERVER_URL } from "./config/constants"
+import { SERVER_URL, FRONTEND_URL } from "./config/constants"
 
 /** Format duration_ms (number) to a human-readable string like "12m" or "1h 5m" */
 function formatDurationMs(ms: number): string {
@@ -43,6 +43,10 @@ export function initializeIpcHandlers(appState: AppState): void {
   // ==========================================
   // Language
   // ==========================================
+
+  safeHandle("get-frontend-url", () => {
+    return FRONTEND_URL;
+  });
 
   safeHandle("get-recognition-languages", async () => {
     return ENGLISH_VARIANTS;
@@ -449,6 +453,12 @@ export function initializeIpcHandlers(appState: AppState): void {
         args.scheduledTime,
         args.botName,
       );
+      // Start listener to receive transcripts from the bot session
+      if (result.session_id) {
+        appState.startBotListener(result.session_id).catch((err: any) => {
+          console.error('[IPC] Failed to start bot listener:', err.message);
+        });
+      }
       return { success: true, ...result };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -470,6 +480,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     if (!client) return { success: false, error: "Not connected" };
     try {
       await client.stopBot(sessionId);
+      await appState.stopBotListener();
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };

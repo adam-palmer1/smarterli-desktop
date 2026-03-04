@@ -38,11 +38,11 @@ interface Message {
     intent?: string;
 }
 
-interface SmarterliInterfaceProps {
+interface ZmiInterfaceProps {
     onEndMeeting?: () => void;
 }
 
-const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting }) => {
+const ZmiInterface: React.FC<ZmiInterfaceProps> = ({ onEndMeeting }) => {
     const [inputValue, setInputValue] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
     const [isConnected, setIsConnected] = useState(false);
@@ -56,7 +56,7 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
     const isRecordingRef = useRef(false);  // Ref to track recording state (avoids stale closure)
     const [manualTranscript, setManualTranscript] = useState('');
     const [showTranscript, setShowTranscript] = useState(() => {
-        const stored = localStorage.getItem('smarterli_interviewer_transcript');
+        const stored = localStorage.getItem('zmi_interviewer_transcript');
         return stored !== 'false';
     });
 
@@ -72,7 +72,7 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
     // Sync transcript setting
     useEffect(() => {
         const handleStorage = () => {
-            const stored = localStorage.getItem('smarterli_interviewer_transcript');
+            const stored = localStorage.getItem('zmi_interviewer_transcript');
             setShowTranscript(stored !== 'false');
         };
         window.addEventListener('storage', handleStorage);
@@ -94,13 +94,13 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
 
     // Settings State with Persistence
     const [hideChatHidesWidget, setHideChatHidesWidget] = useState(() => {
-        const stored = localStorage.getItem('smarterli_hideChatHidesWidget');
+        const stored = localStorage.getItem('zmi_hideChatHidesWidget');
         return stored ? stored === 'true' : true;
     });
 
     // Persist Settings
     useEffect(() => {
-        localStorage.setItem('smarterli_hideChatHidesWidget', String(hideChatHidesWidget));
+        localStorage.setItem('zmi_hideChatHidesWidget', String(hideChatHidesWidget));
     }, [hideChatHidesWidget]);
 
     // Auto-resize Window (debounced to avoid excessive IPC during animations)
@@ -171,7 +171,7 @@ const SmarterliInterface: React.FC<SmarterliInterfaceProps> = ({ onEndMeeting })
     useEffect(() => {
         if (!window.electronAPI?.onSessionReset) return;
         const unsubscribe = window.electronAPI.onSessionReset(() => {
-            console.log('[SmarterliInterface] Resetting session state...');
+            console.log('[ZmiInterface] Resetting session state...');
             setMessages([]);
             setInputValue('');
             setAttachedContext(null);
@@ -1656,4 +1656,4 @@ Provide only the answer, nothing else.`;
     );
 };
 
-export default SmarterliInterface;
+export default ZmiInterface;

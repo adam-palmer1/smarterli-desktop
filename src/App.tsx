@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react" // forcing refresh
 import { QueryClient, QueryClientProvider } from "react-query"
 import { ToastProvider, ToastViewport } from "./components/ui/toast"
-import SmarterliInterface from "./components/SmarterliInterface"
+import ZmiInterface from "./components/ZmiInterface"
 import SettingsPopup from "./components/SettingsPopup" // Keeping for legacy/specific window support if needed
 import Launcher from "./components/Launcher"
 import ModelSelectorWindow from "./components/ModelSelectorWindow"
@@ -105,9 +105,9 @@ const App: React.FC = () => {
       if (result.success) {
         analytics.trackMeetingStarted();
         // Reset streaming toggles to ON for every new meeting
-        localStorage.setItem('smarterli_inputStreaming', 'true');
-        localStorage.setItem('smarterli_outputStreaming', 'true');
-        localStorage.setItem('smarterli_noiseCancellation', 'true');
+        localStorage.setItem('zmi_inputStreaming', 'true');
+        localStorage.setItem('zmi_outputStreaming', 'true');
+        localStorage.setItem('zmi_noiseCancellation', 'true');
         // Switch to Overlay Mode via IPC
         // The main process handles window switching, but we can reinforce it or just trust main.
         // Actually, main process startMeeting triggers nothing UI-wise unless we tell it to switch window
@@ -185,7 +185,7 @@ const App: React.FC = () => {
       <div className="w-full relative bg-transparent">
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <SmarterliInterface
+            <ZmiInterface
               onEndMeeting={handleEndMeeting}
             />
             <ToastViewport />

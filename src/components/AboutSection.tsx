@@ -20,13 +20,13 @@ export const AboutSection: React.FC<AboutSectionProps> = () => {
         <div className="space-y-6 animated fadeIn pb-10">
             {/* Header */}
             <div>
-                <h3 className="text-lg font-bold text-text-primary mb-1">About Smarter.li</h3>
+                <h3 className="text-lg font-bold text-text-primary mb-1">About Zenible Meeting Intelligence</h3>
                 <p className="text-sm text-text-secondary">Your AI copilot for every conversation.</p>
             </div>
 
             {/* Architecture Section */}
             <div>
-                <h4 className="text-xs font-bold text-text-tertiary uppercase tracking-wider mb-2 px-1">How Smarter.li Works</h4>
+                <h4 className="text-xs font-bold text-text-tertiary uppercase tracking-wider mb-2 px-1">How Zenible Works</h4>
                 <div className="bg-bg-item-surface rounded-xl border border-border-subtle overflow-hidden">
                     <div className="p-5 border-b border-border-subtle bg-bg-card/50">
                         <div className="flex items-start gap-4">
@@ -36,7 +36,7 @@ export const AboutSection: React.FC<AboutSectionProps> = () => {
                             <div>
                                 <h5 className="text-sm font-bold text-text-primary mb-1">Hybrid Intelligence</h5>
                                 <p className="text-xs text-text-secondary leading-relaxed">
-                                    Smarter.li routes queries between <span className="text-text-primary font-medium">Groq</span> for near-instant responses and <span className="text-text-primary font-medium">Google Gemini</span> for complex reasoning. Audio is processed via Google Speech-to-Text for enterprise-grade accuracy.
+                                    Zenible routes queries between <span className="text-text-primary font-medium">Groq</span> for near-instant responses and <span className="text-text-primary font-medium">Google Gemini</span> for complex reasoning. Audio is processed via Google Speech-to-Text for enterprise-grade accuracy.
                                 </p>
                             </div>
                         </div>
@@ -50,7 +50,7 @@ export const AboutSection: React.FC<AboutSectionProps> = () => {
                             <div>
                                 <h5 className="text-sm font-bold text-text-primary mb-1">Context Awareness (RAG)</h5>
                                 <p className="text-xs text-text-secondary leading-relaxed">
-                                    A local vector memory system allows Smarter.li to recall details from your past interactions. Context retrieval happens securely on-device where possible to minimize latency.
+                                    A local vector memory system allows Zenible to recall details from your past interactions. Context retrieval happens securely on-device where possible to minimize latency.
                                 </p>
                             </div>
                         </div>
@@ -67,7 +67,7 @@ export const AboutSection: React.FC<AboutSectionProps> = () => {
                         <div>
                             <h5 className="text-sm font-medium text-text-primary">Controlled Data Flow</h5>
                             <p className="text-xs text-text-secondary mt-1 leading-relaxed">
-                                Audio and text are transmitted only to processed endpoints (Google Cloud, Groq) and are not stored permanently by Smarter.li's servers.
+                                Audio and text are transmitted only to processed endpoints (Google Cloud, Groq) and are not stored permanently by Zenible's servers.
                             </p>
                         </div>
                     </div>
@@ -76,7 +76,7 @@ export const AboutSection: React.FC<AboutSectionProps> = () => {
                         <div>
                             <h5 className="text-sm font-medium text-text-primary">No Recording</h5>
                             <p className="text-xs text-text-secondary mt-1 leading-relaxed">
-                                Smarter.li listens only when active. It does not record video, take arbitrary screenshots without command, or perform background surveillance.
+                                Zenible listens only when active. It does not record video, take arbitrary screenshots without command, or perform background surveillance.
                             </p>
                         </div>
                     </div>
@@ -94,7 +94,7 @@ export const AboutSection: React.FC<AboutSectionProps> = () => {
                             </div>
                             <div>
                                 <h5 className="text-sm font-bold text-text-primary">Support Development</h5>
-                                <p className="text-xs text-text-secondary mt-0.5">Smarter.li is independent open-source software.</p>
+                                <p className="text-xs text-text-secondary mt-0.5">Zenible is independent open-source software.</p>
                             </div>
                         </div>
                         <a

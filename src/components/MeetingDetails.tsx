@@ -3,7 +3,7 @@ import { ArrowLeft, Search, Mail, Link, ChevronDown, Play, ArrowUp, Copy, Check,
 import { motion, AnimatePresence } from 'framer-motion';
 import MeetingChatOverlay from './MeetingChatOverlay';
 import EditableTextBlock from './EditableTextBlock';
-import SmarterliLogo from './icon.png';
+import ZmiLogo from './icon.png';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -722,7 +722,7 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                                         {interaction.answer && (
                                             <div className="flex items-start gap-4">
                                                 <div className="mt-1 w-6 h-6 rounded-full bg-bg-input flex items-center justify-center border border-border-subtle shrink-0">
-                                                    <img src={SmarterliLogo} alt="AI" className="w-4 h-4 opacity-50 grayscale object-contain" />
+                                                    <img src={ZmiLogo} alt="AI" className="w-4 h-4 opacity-50 grayscale object-contain" />
                                                 </div>
                                                 <div>
                                                     <div className="text-[11px] text-text-tertiary mb-1.5 font-medium">{formatTime(interaction.timestamp)}</div>

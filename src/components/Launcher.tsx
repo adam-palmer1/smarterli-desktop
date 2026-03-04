@@ -467,7 +467,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                     {/* 1.5. Hero Header (Title + Controls + CTA) */}
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-4">
-                                            <h1 className="text-3xl font-celeb-light font-medium text-text-primary tracking-wide drop-shadow-sm">My Smarter.li</h1>
+                                            <h1 className="text-3xl font-celeb-light font-medium text-text-primary tracking-wide drop-shadow-sm">My Zenible</h1>
 
                                             {/* Refresh Button */}
                                             <button
@@ -485,7 +485,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                         <button
                                             onClick={() => {
                                                 onStartMeeting();
-                                                analytics.trackCommandExecuted('start_smarterli_cta');
+                                                analytics.trackCommandExecuted('start_zmi_cta');
                                             }}
                                             className="
                                     group relative overflow-hidden

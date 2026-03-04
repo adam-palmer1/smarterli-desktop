@@ -31,7 +31,7 @@ const FEATURES: FeatureSlide[] = [
     },
 
     {
-        id: 'support_smarterli',
+        id: 'support_zmi',
         headline: 'Support development',
         subtitle: 'Built openly and sustained by users',
         bullets: [
@@ -54,7 +54,7 @@ export const FeatureSpotlight: React.FC = () => {
     // Interest state: map of feature ID -> boolean
     const [interestState, setInterestState] = useState<Record<string, boolean>>(() => {
         try {
-            const saved = localStorage.getItem('smarterli_feature_interest');
+            const saved = localStorage.getItem('zmi_feature_interest');
             return saved ? JSON.parse(saved) : {};
         } catch (e) {
             return {};
@@ -100,7 +100,7 @@ export const FeatureSpotlight: React.FC = () => {
 
         const newState = { ...interestState, [currentFeature.id]: !isInterested };
         setInterestState(newState);
-        localStorage.setItem('smarterli_feature_interest', JSON.stringify(newState));
+        localStorage.setItem('zmi_feature_interest', JSON.stringify(newState));
 
         // Interaction triggers "Anonymous one-time ping"
         if (!isInterested) {

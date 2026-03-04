@@ -16,7 +16,7 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 
-const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
+const DEBUG_NET = process.env.ZMI_DEBUG_NET === '1';
 
 export interface IntelligenceTokenEvent {
   mode: string;

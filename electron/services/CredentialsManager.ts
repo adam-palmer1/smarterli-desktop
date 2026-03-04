@@ -19,7 +19,7 @@ export interface PanelConfig {
 const CREDENTIALS_PATH = path.join(app.getPath('userData'), 'credentials.enc');
 
 export interface StoredCredentials {
-    serverUrl?: string;          // e.g., "https://app.smarter.li"
+    serverUrl?: string;          // e.g., "https://your-server.example.com"
     apiKey?: string;             // ck_... API key for server auth
     accessToken?: string;        // JWT (cached)
     refreshToken?: string;       // JWT refresh

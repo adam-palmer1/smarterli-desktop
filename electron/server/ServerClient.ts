@@ -2,7 +2,7 @@
  * ServerClient - Central REST client replacing direct LLM/STT/DB calls with server proxies.
  *
  * Handles authentication (JWT + API key), meetings CRUD, billing, health checks,
- * and model listing via the Smarter.li server API.
+ * and model listing via the Zenible server API.
  *
  * Auth header format:
  *   API key:  Authorization: Bearer ck_...
@@ -136,7 +136,7 @@ export class ServerClientError extends Error {
   }
 }
 
-const DEBUG_NET = process.env.SMARTERLI_DEBUG_NET === '1';
+const DEBUG_NET = process.env.ZMI_DEBUG_NET === '1';
 
 export class ServerClient {
   private baseUrl: string;

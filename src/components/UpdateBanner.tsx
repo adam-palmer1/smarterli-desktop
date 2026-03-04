@@ -101,7 +101,7 @@ const UpdateBanner: React.FC = () => {
                                     </div>
                                 ) : (
                                     <p className="text-[13px] text-[#ffffff8a] leading-relaxed mb-6 font-medium">
-                                        A new version of Smarter.li is ready.<br />
+                                        A new version of Zenible is ready.<br />
                                         Install now to update.
                                     </p>
                                 )}

@@ -3,7 +3,7 @@ import { EventEmitter } from 'events';
 let NativeModule: any = null;
 
 try {
-    NativeModule = require('smarterli-audio');
+    NativeModule = require('zmi-audio');
 } catch (e) {
     console.error('[SystemAudioCapture] Failed to load native module:', e);
 }

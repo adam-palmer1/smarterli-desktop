@@ -17,7 +17,7 @@ interface GeneratedSuggestion {
 }
 
 /**
- * Smarter.li-style suggestion overlay component
+ * Zenible-style suggestion overlay component
  * Displays real-time transcripts and AI-generated suggestions
  */
 export const SuggestionOverlay: React.FC<SuggestionOverlayProps> = ({ className }) => {

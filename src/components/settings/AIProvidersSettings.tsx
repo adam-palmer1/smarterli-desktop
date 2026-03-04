@@ -107,7 +107,7 @@ export const AIProvidersSettings: React.FC = () => {
             <div className="space-y-5">
                 <div>
                     <h3 className="text-sm font-bold text-text-primary mb-1">Server Connection</h3>
-                    <p className="text-xs text-text-secondary mb-2">Connect to your Smarter.li server for AI processing and speech-to-text.</p>
+                    <p className="text-xs text-text-secondary mb-2">Connect to your Zenible server for AI processing and speech-to-text.</p>
                 </div>
 
                 {/* Connection Status */}
@@ -198,7 +198,10 @@ export const AIProvidersSettings: React.FC = () => {
                     </div>
 
                     <button
-                        onClick={() => window.electronAPI?.openExternal('https://app.smarter.li/billing')}
+                        onClick={async () => {
+                            const frontendUrl = await window.electronAPI?.getFrontendUrl?.() || 'http://localhost:5180';
+                            window.electronAPI?.openExternal(`${frontendUrl}/billing`);
+                        }}
                         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-medium bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 transition-colors border border-accent-primary/20"
                     >
                         <ExternalLink size={14} />

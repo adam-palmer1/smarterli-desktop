@@ -11,7 +11,7 @@ if (!app.isPackaged) {
 process.stdout?.on?.('error', () => { });
 process.stderr?.on?.('error', () => { });
 
-const logFile = path.join(app.getPath('documents'), 'smarterli_debug.log');
+const logFile = path.join(app.getPath('documents'), 'zmi_debug.log');
 
 const originalLog = console.log;
 const originalWarn = console.warn;
@@ -81,6 +81,7 @@ export class AppState {
   private intelligenceClient: IntelligenceClient | null = null
   private panelClient: PanelClient | null = null
   private currentSessionId: string | null = null
+  private botListenerStreamer: AudioStreamer | null = null
 
   private themeManager: ThemeManager
   private tray: Tray | null = null
@@ -229,7 +230,7 @@ export class AppState {
     // Workaround: Open the folder containing the downloaded update so user can install manually
     if (process.platform === 'darwin') {
       try {
-        // Get the downloaded update file path (e.g., .../Smarter.li-1.0.9-mac.zip)
+        // Get the downloaded update file path (e.g., .../Zenible-Meeting-Intelligence-1.0.9-mac.zip)
         const updateFile = (autoUpdater as any).downloadedUpdateHelper?.file
         console.log('[AutoUpdater] Downloaded update file:', updateFile)
 
@@ -925,6 +926,73 @@ export class AppState {
     return this.panelClient;
   }
 
+  /**
+   * Start a listener WS connection to receive transcripts from a bot session.
+   * Called after the desktop dispatches a meeting bot.
+   */
+  public async startBotListener(sessionId: string): Promise<void> {
+    // Clean up any existing listener
+    await this.stopBotListener();
+
+    const { CredentialsManager } = require('./services/CredentialsManager');
+    const cm = CredentialsManager.getInstance();
+    const apiKey = cm.getApiKey();
+    if (!apiKey) {
+      console.error('[Main] Cannot start bot listener: no API key');
+      return;
+    }
+
+    console.log(`[Main] Starting bot listener for session ${sessionId}`);
+    this.botListenerStreamer = new AudioStreamer(SERVER_URL, apiKey, sessionId, 'listener');
+
+    // Wire transcript events to the UI (same as transparent mode)
+    this.botListenerStreamer.on('transcript', (data) => {
+      const payload = {
+        speaker: data.speaker,
+        text: data.text,
+        timestamp: data.timestamp,
+        final: data.is_final,
+        confidence: data.confidence,
+        person_id: data.person_id,
+        person_name: data.person_name,
+      };
+      this.sendToWindow(this.getWindowHelper().getLauncherWindow(), 'native-audio-transcript', payload);
+      this.sendToWindow(this.getWindowHelper().getOverlayWindow(), 'native-audio-transcript', payload);
+      this.transcriptWindowHelper.sendTranscript(payload);
+
+      if (data.is_final && this.liveFeedbackWindowHelper.isVisible()) {
+        this.feedLiveFeedback(data.text);
+      }
+    });
+
+    this.botListenerStreamer.on('error', (err) => {
+      console.error('[Main] Bot listener error:', err.message);
+    });
+
+    try {
+      await this.botListenerStreamer.connect();
+      console.log('[Main] Bot listener connected');
+    } catch (err: any) {
+      console.error('[Main] Bot listener failed to connect:', err.message);
+      this.botListenerStreamer = null;
+    }
+  }
+
+  /**
+   * Stop the bot listener WS connection.
+   */
+  public async stopBotListener(): Promise<void> {
+    if (this.botListenerStreamer) {
+      console.log('[Main] Stopping bot listener');
+      try {
+        await this.botListenerStreamer.end();
+      } catch {
+        // ignore
+      }
+      this.botListenerStreamer = null;
+    }
+  }
+
   public getThemeManager(): ThemeManager {
     return this.themeManager
   }
@@ -1114,7 +1182,7 @@ export class AppState {
 
     const contextMenu = Menu.buildFromTemplate([
       {
-        label: 'Show Smarter.li',
+        label: 'Show Zenible',
         click: () => {
           this.centerAndShowWindow()
         }
@@ -1158,7 +1226,7 @@ export class AppState {
       }
     ])
 
-    this.tray.setToolTip('Smarter.li - Press Cmd+Shift+Space to show')
+    this.tray.setToolTip('Zenible - Press Cmd+Shift+Space to show')
     this.tray.setContextMenu(contextMenu)
 
     // Double-click to show window
@@ -1191,8 +1259,8 @@ function setMacDockIcon() {
   if (process.platform !== "darwin") return;
 
   const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "smarterli.icns")
-    : path.resolve(__dirname, "../assets/smarterli.icns");
+    ? path.join(process.resourcesPath, "zmi.icns")
+    : path.resolve(__dirname, "../assets/zmi.icns");
 
   console.log("[DockIcon] Using:", iconPath);
   app.dock.setIcon(nativeImage.createFromPath(iconPath));
@@ -1210,7 +1278,7 @@ async function initializeApp() {
   initializeIpcHandlers(appState)
 
   app.whenReady().then(() => {
-    app.setName("Smarter.li"); // Fix App Name in Menu
+    app.setName("Zenible Meeting Intelligence"); // Fix App Name in Menu
 
     try {
       setMacDockIcon(); // MUST be first, before any window

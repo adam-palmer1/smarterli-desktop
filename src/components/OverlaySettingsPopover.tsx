@@ -13,9 +13,9 @@ const OverlaySettingsPopover: React.FC<OverlaySettingsPopoverProps> = ({ isOpen,
     const [outputDevices, setOutputDevices] = useState<Array<{ id: string; name: string }>>([]);
     const [selectedInput, setSelectedInput] = useState(() => localStorage.getItem('preferredInputDeviceId') || '');
     const [selectedOutput, setSelectedOutput] = useState(() => localStorage.getItem('preferredOutputDeviceId') || '');
-    const [noiseCancellation, setNoiseCancellation] = useState(() => localStorage.getItem('smarterli_noiseCancellation') !== 'false');
-    const [inputStreaming, setInputStreaming] = useState(() => localStorage.getItem('smarterli_inputStreaming') !== 'false');
-    const [outputStreaming, setOutputStreaming] = useState(() => localStorage.getItem('smarterli_outputStreaming') !== 'false');
+    const [noiseCancellation, setNoiseCancellation] = useState(() => localStorage.getItem('zmi_noiseCancellation') !== 'false');
+    const [inputStreaming, setInputStreaming] = useState(() => localStorage.getItem('zmi_inputStreaming') !== 'false');
+    const [outputStreaming, setOutputStreaming] = useState(() => localStorage.getItem('zmi_outputStreaming') !== 'false');
     const popoverRef = useRef<HTMLDivElement>(null);
 
     // Load devices on mount
@@ -66,13 +66,13 @@ const OverlaySettingsPopover: React.FC<OverlaySettingsPopoverProps> = ({ isOpen,
 
     const handleInputStreamingToggle = (value: boolean) => {
         setInputStreaming(value);
-        localStorage.setItem('smarterli_inputStreaming', String(value));
+        localStorage.setItem('zmi_inputStreaming', String(value));
         window.electronAPI.setInputStreaming(value).catch(() => {});
     };
 
     const handleOutputStreamingToggle = (value: boolean) => {
         setOutputStreaming(value);
-        localStorage.setItem('smarterli_outputStreaming', String(value));
+        localStorage.setItem('zmi_outputStreaming', String(value));
         window.electronAPI.setOutputStreaming(value).catch(() => {});
     };
 
@@ -135,7 +135,7 @@ const OverlaySettingsPopover: React.FC<OverlaySettingsPopoverProps> = ({ isOpen,
                 <ToggleRow
                     label="Noise Cancellation"
                     checked={noiseCancellation}
-                    onChange={(v) => handleToggle('smarterli_noiseCancellation', v, setNoiseCancellation)}
+                    onChange={(v) => handleToggle('zmi_noiseCancellation', v, setNoiseCancellation)}
                 />
 
                 {/* Mic Streaming Toggle */}

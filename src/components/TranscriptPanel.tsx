@@ -74,13 +74,25 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
             }
 
             setEntries(prev => {
-                // Find the last non-final entry for this speaker (not just the absolute last entry)
+                // Update existing partial for this speaker
                 const lastIdx = prev.findLastIndex(e => e.speaker === data.speaker && !e.final);
                 if (lastIdx >= 0) {
                     const updated = [...prev];
                     updated[lastIdx] = { ...updated[lastIdx], text: data.text, final: data.final };
                     return updated;
                 }
+
+                // Merge consecutive same-speaker finals within 10s
+                if (data.final && prev.length > 0) {
+                    const last = prev[prev.length - 1];
+                    if (last.speaker === data.speaker && last.final && (Date.now() - last.timestamp) < 10_000) {
+                        const updated = [...prev];
+                        updated[updated.length - 1] = { ...last, text: last.text + ' ' + data.text };
+                        return updated;
+                    }
+                }
+
+                // New turn
                 idCounter.current += 1;
                 return [...prev, {
                     id: `t-${idCounter.current}`,

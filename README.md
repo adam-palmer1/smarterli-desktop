@@ -1,32 +1,32 @@
 <div align="center">
-  <img src="assets/icon.png" width="150" alt="Smarter.li Logo">
+  <img src="assets/icon.png" width="150" alt="Zenible Meeting Intelligence Logo">
 
-  # Smarter.li – AI Copilot for Every Conversation
+  # Zenible Meeting Intelligence – AI Copilot for Every Conversation
 
   ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
   ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
-  ![GitHub all releases](https://img.shields.io/github/downloads/smarterli/smarterli/total)
+  ![GitHub all releases](https://img.shields.io/github/downloads/zenible/zmi/total)
   ![Repo Views](https://img.shields.io/badge/views-13.4k-lightgrey)
   ![Status](https://img.shields.io/badge/status-active-success)
-  [![Stars](https://img.shields.io/github/stars/smarterli/smarterli?style=flat)](https://github.com/smarterli/smarterli)
+  [![Stars](https://img.shields.io/github/stars/zenible/zmi?style=flat)](https://github.com/zenible/zmi)
 
 
 
  </div>
 
 ---
-> Smarter.li is your AI copilot for every conversation — a **free, open-source, privacy-first AI assistant** designed to help you **in real time during meetings, interviews, presentations, and conversations**.
+> Zenible Meeting Intelligence is your AI copilot for every conversation — a **free, open-source, privacy-first AI assistant** designed to help you **in real time during meetings, interviews, presentations, and conversations**.
 
 
-Unlike traditional AI tools that work *after* the conversation, Smarter.li works **while the conversation is happening**. It runs as an **invisible, always-on-top desktop overlay**, listens when you want it to, sees what’s on your screen, and delivers **instant, context-aware assistance**.
+Unlike traditional AI tools that work *after* the conversation, Zenible Meeting Intelligence works **while the conversation is happening**. It runs as an **invisible, always-on-top desktop overlay**, listens when you want it to, sees what’s on your screen, and delivers **instant, context-aware assistance**.
 
-Smarter.li is fully transparent, customizable, and gives you complete control over **local vs cloud AI**, your data, and your credentials.
+Zenible Meeting Intelligence is fully transparent, customizable, and gives you complete control over **local vs cloud AI**, your data, and your credentials.
 
 ---
 
 ## Demo
 
-![Smarter.li Demo](demo.gif)
+![Zenible Meeting Intelligence Demo](demo.gif)
 
 This demo shows **a complete live meeting scenario**:
 - Real-time transcription as the meeting happens  
@@ -40,10 +40,10 @@ This demo shows **a complete live meeting scenario**:
 
 ## Quick Start (End Users)
 
-Download the latest prebuilt version from **[Releases](https://github.com/smarterli/smarterli/releases)**.
+Download the latest prebuilt version from **[Releases](https://github.com/zenible/zmi/releases)**.
 
-### [Windows (v1.1.2)](https://github.com/smarterli/smarterli/releases/tag/v1.1.2)
-### [macOS (v1.1.5)](https://github.com/smarterli/smarterli/releases/tag/v1.1.5)
+### [Windows (v1.1.2)](https://github.com/zenible/zmi/releases/tag/v1.1.2)
+### [macOS (v1.1.5)](https://github.com/zenible/zmi/releases/tag/v1.1.5)
 
 No build steps required.
 
@@ -53,7 +53,7 @@ No build steps required.
 > 1.  **"Unidentified Developer"**: If you see this, Right-click the app > Select **Open** > Click **Open**.
 > 2.  **"App is Damaged"**: If you see this (common with DMGs), run this in Terminal:
 >     ```bash
->     xattr -cr /Applications/Smarter.li.app
+>     xattr -cr /Applications/Zenible Meeting Intelligence.app
 >     ```
 >     *(Or point to wherever you installed the app)*
 
@@ -72,7 +72,7 @@ No build steps required.
 
 ## Table of Contents
 
-- [What Is Smarter.li?](#what-is-smarterli)
+- [What Is Zenible Meeting Intelligence?](#what-is-zmi)
 - [Key Capabilities](#key-capabilities)
 - [Privacy & Security](#privacy--security-core-design-principle)
 - [Quick Start (End Users)](#quick-start-end-users)
@@ -90,9 +90,9 @@ No build steps required.
 
 ---
 
-## What Is Smarter.li?
+## What Is Zenible Meeting Intelligence?
 
-**Smarter.li** is a **desktop AI assistant for live situations**:
+**Zenible Meeting Intelligence** is a **desktop AI assistant for live situations**:
 - Meetings
 - Interviews
 - Presentations
@@ -157,7 +157,7 @@ You explicitly control:
 ## Bring Your Own Google Speech-to-Text (Required)
 
 **Important:**  
-Smarter.li relies on **Google Speech-to-Text** for real-time transcription.  
+Zenible Meeting Intelligence relies on **Google Speech-to-Text** for real-time transcription.  
 Without a valid Google Service Account, transcription will not function.
 
 Your credentials:
@@ -177,7 +177,7 @@ Your credentials:
 3. Create a Service Account  
 4. Assign role: `roles/speech.client`  
 5. Generate and download a JSON key  
-6. Point Smarter.li to the JSON file in settings  
+6. Point Zenible Meeting Intelligence to the JSON file in settings  
 
 ---
 
@@ -185,8 +185,8 @@ Your credentials:
 
 ### Clone the Repository
 ```bash
-git clone https://github.com/smarterli/smarterli.git
-cd smarterli
+git clone https://github.com/zenible/zmi.git
+cd zmi
 ```
 
 ### Install Dependencies
@@ -299,7 +299,7 @@ npm run dist
 
 ## Comparison
 
-| Feature | Smarter.li | Commercial Tools | Other OSS |
+| Feature | Zenible Meeting Intelligence | Commercial Tools | Other OSS |
 | :--- | :--- | :--- | :--- |
 | **Price** | **Free** | Paid | Free |
 | **Open Source** | **Yes** | No | Partial |
@@ -314,7 +314,7 @@ npm run dist
 
 ## Architecture Overview
 
-Smarter.li processes audio, screen context, and user input locally, maintains a rolling context window, and sends only the required prompt data to the selected AI provider (local or cloud).
+Zenible Meeting Intelligence processes audio, screen context, and user input locally, maintains a rolling context window, and sends only the required prompt data to the selected AI provider (local or cloud).
 
 No raw audio, screenshots, or transcripts are stored or transmitted unless explicitly enabled by the user. 
 
@@ -344,7 +344,7 @@ No raw audio, screenshots, or transcripts are stored or transmitted unless expli
 
 ## Responsible Use
 
-Smarter.li is intended for:
+Zenible Meeting Intelligence is intended for:
 - Learning
 - Productivity
 - Accessibility
@@ -389,7 +389,7 @@ If you run or modify this software over a network, you must provide the full sou
 
 ---
 
-**⭐ Star this repo if Smarter.li helps you succeed in meetings, interviews, or presentations!**
+**⭐ Star this repo if Zenible Meeting Intelligence helps you succeed in meetings, interviews, or presentations!**
 
 ### 🏷️ Tags
-`ai-assistant` `meeting-notes` `interview-helper` `presentation-support` `ollama` `gemini-ai` `electron-app` `cross-platform` `privacy-focused` `open-source` `local-ai` `screenshot-analysis` `academic-helper` `sales-assistant` `coding-companion` `smarterli` `ai-copilot` `interview coder` `final round ai` `claude skills` `moltbot`
+`ai-assistant` `meeting-notes` `interview-helper` `presentation-support` `ollama` `gemini-ai` `electron-app` `cross-platform` `privacy-focused` `open-source` `local-ai` `screenshot-analysis` `academic-helper` `sales-assistant` `coding-companion` `zmi` `ai-copilot` `interview coder` `final round ai` `claude skills` `moltbot`
