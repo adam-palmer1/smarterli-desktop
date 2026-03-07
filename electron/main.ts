@@ -452,6 +452,7 @@ export class AppState {
         this.isMeetingActive = false;
         throw new Error('API key not configured');
       }
+      const meetingApiKey = cm.getMeetingApiKey() || apiKey;
 
       this.currentSessionId = crypto.randomUUID();
 
@@ -465,10 +466,10 @@ export class AppState {
       }
       this.setupSystemAudioPipeline();
 
-      // Connect to server
-      this.audioStreamer = new AudioStreamer(SERVER_URL, apiKey, this.currentSessionId);
+      // Connect to server (WebSocket clients use meeting-server key, HTTP clients use user-server key)
+      this.audioStreamer = new AudioStreamer(SERVER_URL, meetingApiKey, this.currentSessionId);
       this.intelligenceClient = new IntelligenceClient(SERVER_URL, apiKey);
-      this.panelClient = new PanelClient(SERVER_URL, apiKey, this.currentSessionId);
+      this.panelClient = new PanelClient(SERVER_URL, meetingApiKey, this.currentSessionId);
 
       // Set audio sample rates on the streamer from local capture devices
       const sysRate = this.systemAudioCapture?.getSampleRate() || 16000;
@@ -941,9 +942,10 @@ export class AppState {
       console.error('[Main] Cannot start bot listener: no API key');
       return;
     }
+    const meetingApiKey = cm.getMeetingApiKey() || apiKey;
 
     console.log(`[Main] Starting bot listener for session ${sessionId}`);
-    this.botListenerStreamer = new AudioStreamer(SERVER_URL, apiKey, sessionId, 'listener');
+    this.botListenerStreamer = new AudioStreamer(SERVER_URL, meetingApiKey, sessionId, 'listener');
 
     // Wire transcript events to the UI (same as transparent mode)
     this.botListenerStreamer.on('transcript', (data) => {

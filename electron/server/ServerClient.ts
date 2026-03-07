@@ -96,6 +96,7 @@ export interface UserInfo {
   display_name: string | null;
   is_active: boolean;
   is_admin: boolean;
+  meeting_api_key: string | null;
 }
 
 export interface PersonItem {

@@ -525,7 +525,18 @@ export function initializeIpcHandlers(appState: AppState): void {
     const cm = CredentialsManager.getInstance();
     cm.setApiKey(key.trim());
     const client = appState.getServerClient();
-    if (client) client.setApiKey(key.trim());
+    if (client) {
+      client.setApiKey(key.trim());
+      // Fetch meeting API key for WebSocket connections
+      try {
+        const me = await client.getMe();
+        if (me.meeting_api_key) {
+          cm.setMeetingApiKey(me.meeting_api_key);
+        }
+      } catch (e: any) {
+        console.warn('[IPC] Failed to fetch meeting API key:', e.message);
+      }
+    }
     return { success: true };
   });
 
@@ -538,6 +549,17 @@ export function initializeIpcHandlers(appState: AppState): void {
       const cm = CredentialsManager.getInstance();
       cm.setAccessToken(tokens.access_token);
       cm.setRefreshToken(tokens.refresh_token);
+
+      // Fetch meeting API key for WebSocket connections
+      try {
+        const me = await client.getMe();
+        if (me.meeting_api_key) {
+          cm.setMeetingApiKey(me.meeting_api_key);
+        }
+      } catch (e: any) {
+        console.warn('[IPC] Failed to fetch meeting API key after login:', e.message);
+      }
+
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message };
@@ -550,6 +572,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     cm.setAccessToken('');
     cm.setRefreshToken('');
     cm.setApiKey('');
+    cm.setMeetingApiKey('');
     return { success: true };
   });
 

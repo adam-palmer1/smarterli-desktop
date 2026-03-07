@@ -20,7 +20,8 @@ const CREDENTIALS_PATH = path.join(app.getPath('userData'), 'credentials.enc');
 
 export interface StoredCredentials {
     serverUrl?: string;          // e.g., "https://your-server.example.com"
-    apiKey?: string;             // ck_... API key for server auth
+    apiKey?: string;             // ck_... API key for user-server auth
+    meetingApiKey?: string;      // ck_... API key for meeting-server WebSocket auth
     accessToken?: string;        // JWT (cached)
     refreshToken?: string;       // JWT refresh
     // Local-only preferences:
@@ -94,6 +95,16 @@ export class CredentialsManager {
         this.credentials.refreshToken = token;
         this.saveCredentials();
         console.log('[CredentialsManager] Refresh token updated');
+    }
+
+    public getMeetingApiKey(): string | undefined {
+        return this.credentials.meetingApiKey;
+    }
+
+    public setMeetingApiKey(key: string): void {
+        this.credentials.meetingApiKey = key;
+        this.saveCredentials();
+        console.log('[CredentialsManager] Meeting API key updated');
     }
 
     public getAllCredentials(): StoredCredentials {
