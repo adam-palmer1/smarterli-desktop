@@ -32,6 +32,7 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
     const [entries, setEntries] = useState<TranscriptEntry[]>([]);
     const [speakers, setSpeakers] = useState<Map<string, SpeakerInfo>>(new Map());
     const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
+    const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [editValue, setEditValue] = useState('');
     const [personResults, setPersonResults] = useState<PersonResult[]>([]);
     const [showDropdown, setShowDropdown] = useState(false);
@@ -173,9 +174,10 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
         return speaker;
     };
 
-    const handleStartEdit = (speaker: string) => {
+    const handleStartEdit = (speaker: string, entryId: string) => {
         editHandledRef.current = false;
         setEditingSpeaker(speaker);
+        setEditingEntryId(entryId);
         setEditValue(getSpeakerLabel(speaker));
         setPersonResults([]);
         setShowDropdown(false);
@@ -184,7 +186,17 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
     const handleSelectPerson = async (person: PersonResult) => {
         if (!editingSpeaker || !currentMeetingId) return;
         editHandledRef.current = true;
-        const speakerInfo = speakers.get(editingSpeaker);
+        // Fetch fresh speakers if not already in the map
+        let speakerInfo = speakers.get(editingSpeaker);
+        if (!speakerInfo) {
+            try {
+                const freshList = await window.electronAPI.getMeetingSpeakers(currentMeetingId);
+                const freshMap = new Map<string, SpeakerInfo>();
+                freshList.forEach(s => freshMap.set(s.channel_label, s));
+                setSpeakers(freshMap);
+                speakerInfo = freshMap.get(editingSpeaker);
+            } catch {}
+        }
         if (speakerInfo) {
             // Try voiceprint enrollment first (also links the speaker as a side effect)
             const voiceprint = await window.electronAPI.enrollVoiceprint(person.id, currentMeetingId, speakerInfo.channel_label);
@@ -194,20 +206,63 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
             }
             setSpeakers(prev => {
                 const next = new Map(prev);
-                next.set(editingSpeaker!, { ...speakerInfo, display_name: person.name, person_id: person.id, person_name: person.name });
+                next.set(editingSpeaker!, { ...speakerInfo!, display_name: person.name, person_id: person.id, person_name: person.name });
+                return next;
+            });
+        } else {
+            // Speaker not in DB yet — update local display only
+            setSpeakers(prev => {
+                const next = new Map(prev);
+                next.set(editingSpeaker!, {
+                    id: '', channel_label: editingSpeaker!, display_name: person.name,
+                    person_id: person.id, person_name: person.name, is_self: false,
+                });
                 return next;
             });
         }
         setEditingSpeaker(null);
+        setEditingEntryId(null);
         setEditValue('');
         setShowDropdown(false);
     };
 
     const handleCreateAndLink = async (name: string) => {
-        if (!editingSpeaker || !currentMeetingId) return;
+        if (!editingSpeaker || !currentMeetingId) {
+            console.warn('[TranscriptPanel] handleCreateAndLink: missing editingSpeaker or currentMeetingId', { editingSpeaker, currentMeetingId });
+            return;
+        }
         editHandledRef.current = true;
-        const speakerInfo = speakers.get(editingSpeaker);
-        if (!speakerInfo) return;
+        // Fetch fresh speakers if not already in the map
+        let speakerInfo = speakers.get(editingSpeaker);
+        if (!speakerInfo) {
+            try {
+                const freshList = await window.electronAPI.getMeetingSpeakers(currentMeetingId);
+                const freshMap = new Map<string, SpeakerInfo>();
+                freshList.forEach(s => freshMap.set(s.channel_label, s));
+                setSpeakers(freshMap);
+                speakerInfo = freshMap.get(editingSpeaker);
+            } catch {}
+        }
+        if (!speakerInfo) {
+            console.warn('[TranscriptPanel] handleCreateAndLink: speaker not found in meeting speakers', { editingSpeaker });
+            // Still create the person and update local display
+            const person = await window.electronAPI.createPerson(name);
+            if (person) {
+                setSpeakers(prev => {
+                    const next = new Map(prev);
+                    next.set(editingSpeaker!, {
+                        id: '', channel_label: editingSpeaker!, display_name: person.name,
+                        person_id: person.id, person_name: person.name, is_self: false,
+                    });
+                    return next;
+                });
+            }
+            setEditingSpeaker(null);
+            setEditingEntryId(null);
+            setEditValue('');
+            setShowDropdown(false);
+            return;
+        }
         const person = await window.electronAPI.createPerson(name);
         if (!person) return;
         const voiceprint = await window.electronAPI.enrollVoiceprint(person.id, currentMeetingId, speakerInfo.channel_label);
@@ -216,10 +271,11 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
         }
         setSpeakers(prev => {
             const next = new Map(prev);
-            next.set(editingSpeaker!, { ...speakerInfo, display_name: person.name, person_id: person.id, person_name: person.name });
+            next.set(editingSpeaker!, { ...speakerInfo!, display_name: person.name, person_id: person.id, person_name: person.name });
             return next;
         });
         setEditingSpeaker(null);
+        setEditingEntryId(null);
         setEditValue('');
         setShowDropdown(false);
     };
@@ -239,6 +295,7 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
             });
         }
         setEditingSpeaker(null);
+        setEditingEntryId(null);
         setEditValue('');
         setShowDropdown(false);
     };
@@ -246,6 +303,7 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
     const handleCancelEdit = () => {
         editHandledRef.current = true;
         setEditingSpeaker(null);
+        setEditingEntryId(null);
         setEditValue('');
         setShowDropdown(false);
     };
@@ -297,20 +355,29 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
                 ) : (
                     entries.map((entry) => (
                         <div key={entry.id} className="flex flex-col gap-0.5">
-                            {editingSpeaker === entry.speaker ? (
+                            {editingEntryId === entry.id ? (
                                 <div className="relative" ref={dropdownRef}>
-                                    <input
-                                        ref={editInputRef}
-                                        type="text"
-                                        value={editValue}
-                                        onChange={e => setEditValue(e.target.value)}
-                                        onBlur={() => setTimeout(() => { handleFinishEdit(); }, 150)}
-                                        onKeyDown={e => {
-                                            if (e.key === 'Enter') { e.preventDefault(); handleFinishEdit(); }
-                                            if (e.key === 'Escape') { e.preventDefault(); handleCancelEdit(); }
-                                        }}
-                                        className="inline-flex self-start px-1.5 py-0.5 rounded text-[10px] font-medium bg-bg-input border border-border-subtle text-text-primary outline-none w-32"
-                                    />
+                                    <div className="flex items-center gap-1">
+                                        <input
+                                            ref={editInputRef}
+                                            type="text"
+                                            value={editValue}
+                                            onChange={e => setEditValue(e.target.value)}
+                                            onBlur={() => setTimeout(() => { handleFinishEdit(); }, 150)}
+                                            onKeyDown={e => {
+                                                if (e.key === 'Enter') { e.preventDefault(); handleFinishEdit(); }
+                                                if (e.key === 'Escape') { e.preventDefault(); handleCancelEdit(); }
+                                            }}
+                                            className="inline-flex self-start px-1.5 py-0.5 rounded text-[10px] font-medium bg-bg-input border border-border-subtle text-text-primary outline-none w-32"
+                                        />
+                                        <button
+                                            onMouseDown={(e) => { e.preventDefault(); handleCancelEdit(); }}
+                                            className="w-4 h-4 flex items-center justify-center rounded hover:bg-black/10 dark:hover:bg-white/10 text-text-tertiary hover:text-text-secondary transition-colors shrink-0"
+                                            title="Cancel"
+                                        >
+                                            <X size={10} />
+                                        </button>
+                                    </div>
                                     {showDropdown && (() => {
                                         const canCreate = editValue.trim().length > 0 && !personResults.some(p => p.name.toLowerCase() === editValue.trim().toLowerCase());
                                         if (personResults.length === 0 && !canCreate) return null;
@@ -350,7 +417,7 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
                             ) : (
                                 <div className="flex items-center gap-1 self-start">
                                     <button
-                                        onClick={() => handleStartEdit(entry.speaker)}
+                                        onClick={() => handleStartEdit(entry.speaker, entry.id)}
                                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${getSpeakerColor(entry.speaker)} cursor-pointer hover:opacity-80 transition-opacity`}
                                         title="Click to rename speaker"
                                     >

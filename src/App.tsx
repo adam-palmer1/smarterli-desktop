@@ -252,6 +252,11 @@ const App: React.FC = () => {
                 <SettingsOverlay
                   isOpen={isSettingsOpen}
                   onClose={() => setIsSettingsOpen(false)}
+                  onLogout={async () => {
+                    await window.electronAPI.serverLogout();
+                    setIsSettingsOpen(false);
+                    setIsAuthenticated(false);
+                  }}
                 />
                 <ToastViewport />
               </ToastProvider>

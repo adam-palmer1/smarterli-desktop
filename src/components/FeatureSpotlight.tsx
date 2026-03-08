@@ -30,19 +30,6 @@ const FEATURES: FeatureSlide[] = [
         type: 'premium',
     },
 
-    {
-        id: 'support_zmi',
-        headline: 'Support development',
-        subtitle: 'Built openly and sustained by users',
-        bullets: [
-            'Development driven by real users',
-            'Faster iteration on features that matter',
-
-        ],
-        type: 'support',
-        actionLabel: 'Contribute to development',
-        url: 'https://buymeacoffee.com/evinjohnn'
-    }
 ];
 
 // --- Component ---

@@ -651,6 +651,11 @@ export class AppState {
 
       // Reset session
       this.currentSessionId = null;
+
+      // Notify launcher that meetings list should refresh (delay to allow server processing)
+      setTimeout(() => {
+        this.sendToWindow(this.getWindowHelper().getLauncherWindow(), 'meetings-updated');
+      }, 2000);
     } finally {
       this.isMeetingTransitioning = false;
     }

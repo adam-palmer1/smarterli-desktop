@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { ToggleLeft, ToggleRight, Search, Zap, Calendar, ArrowRight, ArrowLeft, MoreVertical, Globe, Clock, ChevronRight, Settings, RefreshCw, Plus, Mail, Link as LinkIcon, ChevronDown, Trash2, Bell, Check, Download, Bot, Loader2, Monitor } from 'lucide-react';
+import { ToggleLeft, ToggleRight, Search, Zap, Calendar, ArrowRight, ArrowLeft, MoreVertical, Globe, Clock, ChevronRight, Settings, RefreshCw, Plus, Mail, Link as LinkIcon, ChevronDown, Trash2, Bell, Check, Download, Bot, Loader2, Monitor, Pencil } from 'lucide-react';
 import { generateMeetingPDF } from '../utils/pdfGenerator';
 import icon from "./icon.png";
 import mainui from "../UI_comp/mainui.png";
-import calender from "../UI_comp/calender.png";
-import ConnectCalendarButton from './ui/ConnectCalendarButton';
 import MeetingDetails from './MeetingDetails';
 import TopSearchPill from './TopSearchPill';
 import GlobalChatOverlay from './GlobalChatOverlay';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FeatureSpotlight } from './FeatureSpotlight';
 import { analytics } from '../lib/analytics/analytics.service'; // Added analytics import
 
 interface Meeting {
@@ -88,13 +85,32 @@ const formatDateTime = (dateStr: string) => {
     return `${short}, ${time}`;
 };
 
+const formatDateOnly = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const checkDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.round((today.getTime() - checkDate.getTime()) / 86400000);
+    if (diffDays === 0) return '';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays >= 2 && diffDays <= 6) return date.toLocaleDateString('en-US', { weekday: 'long' });
+    const day = date.getDate();
+    const suffix = day === 1 || day === 21 || day === 31 ? 'st' : day === 2 || day === 22 ? 'nd' : day === 3 || day === 23 ? 'rd' : 'th';
+    const month = date.toLocaleDateString('en-US', { month: 'short' });
+    return `${day}${suffix} ${month} ${date.getFullYear()}`;
+};
+
+const formatTimeOnly = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
 const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) => {
     const [meetings, setMeetings] = useState<Meeting[]>([]);
     const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
     const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
     const [isPrepared, setIsPrepared] = useState(false);
     const [preparedEvent, setPreparedEvent] = useState<any>(null);
-    const [isCalendarConnected, setIsCalendarConnected] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [showNotification, setShowNotification] = useState(false);
 
@@ -187,23 +203,17 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        analytics.trackCommandExecuted('refresh_calendar');
+        analytics.trackCommandExecuted('refresh');
         try {
-            if (window.electronAPI && window.electronAPI.calendarRefresh) {
-                setShowNotification(true);
-                await window.electronAPI.calendarRefresh();
-                fetchEvents();
-                fetchMeetings();
-                setTimeout(() => {
-                    setShowNotification(false);
-                }, 3000);
-            } else {
-                console.warn("electronAPI.calendarRefresh not found");
-            }
+            setShowNotification(true);
+            fetchEvents();
+            fetchMeetings();
+            setTimeout(() => {
+                setShowNotification(false);
+            }, 3000);
         } catch (e) {
             console.error("Refresh failed in handleRefresh:", e);
         } finally {
-            // Ensure distinct feedback provided (min 500ms spin)
             setTimeout(() => setIsRefreshing(false), 500);
         }
     };
@@ -296,6 +306,8 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
     const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
     const [menuEntered, setMenuEntered] = useState(false);
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+    const [renamingId, setRenamingId] = useState<string | null>(null);
+    const [renameValue, setRenameValue] = useState('');
 
     useEffect(() => {
         setMenuEntered(false);
@@ -467,7 +479,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                     {/* 1.5. Hero Header (Title + Controls + CTA) */}
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-4">
-                                            <h1 className="text-3xl font-celeb-light font-medium text-text-primary tracking-wide drop-shadow-sm">My Zenible</h1>
+                                            <h1 className="text-3xl font-celeb-light font-medium text-text-primary tracking-wide drop-shadow-sm">Zenible Meeting Intelligence</h1>
 
                                             {/* Refresh Button */}
                                             <button
@@ -510,8 +522,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                             {/* Internal glow */}
                                             <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
 
-                                            <img src={icon} alt="Logo" className="w-[18px] h-[18px] object-contain brightness-0 invert drop-shadow-[0_1px_2px_rgba(0,0,0,0.1)] opacity-90" />
-                                            <span className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.1)] text-[20px] leading-none">+ New Conversation</span>
+                                            <span className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.1)] text-[20px] leading-none">+ New Meeting</span>
                                         </button>
                                     </div>
 
@@ -521,8 +532,8 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                             onClick={() => setMeetingMode('transparent')}
                                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                                                 meetingMode === 'transparent'
-                                                    ? 'bg-white/10 text-white border border-white/15'
-                                                    : 'text-text-tertiary hover:text-text-secondary hover:bg-white/5'
+                                                    ? 'bg-bg-item-active text-text-primary border border-border-subtle'
+                                                    : 'text-text-tertiary hover:text-text-secondary hover:bg-bg-item-active/50'
                                             }`}
                                         >
                                             <Monitor size={13} />
@@ -532,8 +543,8 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                             onClick={() => setMeetingMode('bot')}
                                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                                                 meetingMode === 'bot'
-                                                    ? 'bg-white/10 text-white border border-white/15'
-                                                    : 'text-text-tertiary hover:text-text-secondary hover:bg-white/5'
+                                                    ? 'bg-bg-item-active text-text-primary border border-border-subtle'
+                                                    : 'text-text-tertiary hover:text-text-secondary hover:bg-bg-item-active/50'
                                             }`}
                                         >
                                             <Bot size={13} />
@@ -714,41 +725,9 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                     {/* Background Decoration */}
                                                     <div className="absolute top-0 right-0 w-[150px] h-[150px] bg-orange-500/10 blur-[60px] pointer-events-none" />
                                                 </div>
-                                            ) : (
-                                                <div className="w-full h-[198px]">
-                                                    <FeatureSpotlight />
-                                                </div>
-                                            )
+                                            ) : null
                                         )}
 
-                                        {/* Calendar Card — Full Width */}
-                                        <div className="glass-panel relative group overflow-hidden flex items-center p-6 bg-gradient-to-br from-orange-500/5 via-transparent to-transparent">
-                                            {/* Backdrop Image */}
-                                            <div className="absolute inset-0">
-                                                <img src={calender} alt="" className="w-full h-full object-cover opacity-30 transition-opacity duration-500 scale-105" />
-                                            </div>
-
-                                            {/* Content Layer */}
-                                            <div className="relative z-10 w-full flex items-center justify-between">
-                                                <h3 className="text-[17px] leading-tight">
-                                                    {isCalendarConnected ? (
-                                                        <>
-                                                            <span className="font-semibold text-text-primary">Calendar linked</span>
-                                                            <span className="font-medium text-text-secondary text-[0.95em] ml-2">Events synced</span>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <span className="font-semibold text-text-primary">Link your calendar</span>
-                                                            <span className="font-medium text-text-secondary text-[0.95em] ml-2">to see upcoming events</span>
-                                                        </>
-                                                    )}
-                                                </h3>
-
-                                                <ConnectCalendarButton
-                                                    onConnect={() => setIsCalendarConnected(true)}
-                                                />
-                                            </div>
-                                        </div>
                                     </div>
                                 </div>
                             </section>
@@ -768,11 +747,36 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                             key={m.id}
                                                             layoutId={`meeting-${m.id}`}
                                                             className="group relative flex items-center justify-between px-3 py-2 rounded-lg bg-transparent hover:bg-white/5 transition-colors cursor-pointer"
-                                                            onClick={() => handleOpenMeeting(m)}
+                                                            onClick={() => renamingId !== m.id && handleOpenMeeting(m)}
                                                         >
-                                                            <div className={`font-medium text-[14px] max-w-[60%] truncate ${m.title === 'Processing...' ? 'text-orange-400 italic animate-pulse' : 'text-text-primary'}`}>
-                                                                {m.title}
-                                                            </div>
+                                                            {renamingId === m.id ? (
+                                                                <input
+                                                                    autoFocus
+                                                                    className="font-medium text-[14px] max-w-[60%] bg-bg-input border border-border-subtle rounded px-2 py-0.5 text-text-primary outline-none focus:border-accent-primary"
+                                                                    value={renameValue}
+                                                                    onChange={(e) => setRenameValue(e.target.value)}
+                                                                    onKeyDown={async (e) => {
+                                                                        if (e.key === 'Enter' && renameValue.trim()) {
+                                                                            await window.electronAPI.updateMeetingTitle(m.id, renameValue.trim());
+                                                                            setRenamingId(null);
+                                                                            fetchMeetings();
+                                                                        }
+                                                                        if (e.key === 'Escape') setRenamingId(null);
+                                                                    }}
+                                                                    onBlur={async () => {
+                                                                        if (renameValue.trim() && renameValue.trim() !== m.title) {
+                                                                            await window.electronAPI.updateMeetingTitle(m.id, renameValue.trim());
+                                                                            fetchMeetings();
+                                                                        }
+                                                                        setRenamingId(null);
+                                                                    }}
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                />
+                                                            ) : (
+                                                                <div className={`font-medium text-[14px] max-w-[40%] truncate ${m.title === 'Processing...' ? 'text-orange-400 italic animate-pulse' : 'text-text-primary'}`}>
+                                                                    {m.title}
+                                                                </div>
+                                                            )}
 
                                                             {/* Time & Duration Section */}
                                                             <div className="flex items-center gap-4">
@@ -787,9 +791,16 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                                             {formatDurationPill(m.duration)}
                                                                         </span>
 
-                                                                        {/* Date & Time Text (Should fade out on hover) */}
-                                                                        <span className="text-[13px] text-text-secondary font-medium min-w-[100px] text-right transition-all duration-200 ease-out group-hover:opacity-0 group-hover:translate-x-2 delayed-hover-exit">
-                                                                            {formatDateTime(m.date)}
+                                                                        {/* Date (Should fade out on hover) */}
+                                                                        {formatDateOnly(m.date) && (
+                                                                            <span className="text-[13px] text-text-tertiary font-medium text-right transition-all duration-200 ease-out group-hover:opacity-0 group-hover:translate-x-2 delayed-hover-exit">
+                                                                                {formatDateOnly(m.date)}
+                                                                            </span>
+                                                                        )}
+
+                                                                        {/* Time (Should fade out on hover) */}
+                                                                        <span className="text-[13px] text-text-secondary font-medium min-w-[45px] text-right transition-all duration-200 ease-out group-hover:opacity-0 group-hover:translate-x-2 delayed-hover-exit">
+                                                                            {formatTimeOnly(m.date)}
                                                                         </span>
                                                                     </>
                                                                 )}
@@ -816,7 +827,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                                         animate={{ opacity: 1, scale: 1, y: 0 }}
                                                                         exit={{ opacity: 0, scale: 0.95, y: 5 }}
                                                                         transition={{ duration: 0.1 }}
-                                                                        className="absolute right-0 top-full mt-1 w-[90px] glass-panel-heavy z-50 overflow-hidden"
+                                                                        className="absolute right-0 top-full mt-1 w-[100px] glass-panel-heavy z-50 overflow-hidden"
                                                                         onClick={(e) => e.stopPropagation()}
                                                                         onMouseEnter={() => setMenuEntered(true)}
                                                                         onMouseLeave={() => {
@@ -824,6 +835,17 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                                                                         }}
                                                                     >
                                                                         <div className="p-1 flex flex-col gap-0.5">
+                                                                            <button
+                                                                                className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-text-primary hover:bg-white/10 rounded-lg transition-colors text-left"
+                                                                                onClick={() => {
+                                                                                    setActiveMenuId(null);
+                                                                                    setRenameValue(m.title);
+                                                                                    setRenamingId(m.id);
+                                                                                }}
+                                                                            >
+                                                                                <Pencil size={13} />
+                                                                                Rename
+                                                                            </button>
                                                                             <button
                                                                                 className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-text-primary hover:bg-white/10 rounded-lg transition-colors text-left"
                                                                                 onClick={async () => {
@@ -903,7 +925,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings }) =
                         {/* Text Content */}
                         <div className="flex flex-col gap-0.5">
                             <span className="text-[14px] font-semibold text-white/95 leading-none tracking-tight drop-shadow-md">Refreshed</span>
-                            <span className="text-[11px] text-orange-200/60 font-medium leading-none tracking-wide">Synced with calendar</span>
+                            <span className="text-[11px] text-orange-200/60 font-medium leading-none tracking-wide">Meetings updated</span>
                         </div>
 
                         {/* Specular Highlight Overlay */}

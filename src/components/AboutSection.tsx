@@ -1,7 +1,7 @@
 import React from 'react';
 import {
     Shield, Cpu, Database,
-    Heart, MicOff
+    MicOff
 } from 'lucide-react';
 
 interface AboutSectionProps { }
@@ -79,31 +79,6 @@ export const AboutSection: React.FC<AboutSectionProps> = () => {
                                 Zenible listens only when active. It does not record video, take arbitrary screenshots without command, or perform background surveillance.
                             </p>
                         </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Support Section */}
-            <div>
-                <h4 className="text-xs font-bold text-text-tertiary uppercase tracking-wider mb-2 px-1">Community</h4>
-                <div className="space-y-4">
-                    <div className="bg-bg-item-surface rounded-xl border border-border-subtle p-5 flex flex-col md:flex-row items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-400 shadow-sm shadow-orange-500/5">
-                                <Heart size={18} fill="currentColor" className="opacity-80" />
-                            </div>
-                            <div>
-                                <h5 className="text-sm font-bold text-text-primary">Support Development</h5>
-                                <p className="text-xs text-text-secondary mt-0.5">Zenible is independent open-source software.</p>
-                            </div>
-                        </div>
-                        <a
-                            href="#"
-                            onClick={(e) => e.preventDefault()}
-                            className="whitespace-nowrap px-4 py-2 bg-text-primary hover:bg-white/90 text-bg-main text-xs font-bold rounded-lg transition-all shadow hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0"
-                        >
-                            Support Project
-                        </a>
                     </div>
                 </div>
             </div>
