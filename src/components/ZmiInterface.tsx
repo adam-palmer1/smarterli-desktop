@@ -1289,11 +1289,10 @@ Provide only the answer, nothing else.`;
                         <div className="
                     relative w-[600px] max-w-full
                     glass-panel-heavy
-                    shadow-2xl shadow-black/40
                     rounded-[24px]
                     overflow-hidden
                     flex flex-col
-                ">
+                " style={{ boxShadow: 'inset 0 1px 0 var(--glass-highlight)' }}>
 
 
 

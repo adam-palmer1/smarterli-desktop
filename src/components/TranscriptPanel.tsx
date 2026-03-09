@@ -336,7 +336,7 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ meetingId }) => {
     };
 
     return (
-        <div className="glass-panel-heavy w-[300px] max-h-[420px] flex flex-col rounded-xl overflow-hidden">
+        <div className="glass-panel-heavy w-[300px] max-h-[420px] flex flex-col rounded-xl overflow-hidden" style={{ boxShadow: 'inset 0 1px 0 var(--glass-highlight)' }}>
             <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle shrink-0 drag-region select-none">
                 <span className="text-xs font-medium text-text-secondary">Live Transcript</span>
                 <button

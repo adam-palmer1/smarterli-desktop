@@ -5,7 +5,8 @@ use anyhow::Result;
 use cidre::{arc, sc, cm, dispatch, ns, objc, define_obj_type};
 use cidre::sc::StreamOutput;
 use ringbuf::{traits::{Producer, Split}, HeapProd, HeapRb, HeapCons};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 // keep for compatibility
 use cidre::core_audio as ca;
@@ -29,6 +30,7 @@ pub fn list_output_devices() -> Result<Vec<(String, String)>> {
 
 pub struct AudioHandlerInner {
     producer: HeapProd<f32>,
+    actual_sample_rate: Arc<AtomicU32>,
 }
 
 define_obj_type!(
@@ -54,6 +56,16 @@ impl sc::stream::OutputImpl for AudioHandler {
 
         // Access inner state safely
         let inner = self.inner_mut();
+
+        // Extract actual sample rate from CMSampleBuffer format description
+        if let Some(fmt) = sample_buf.format_desc() {
+            if let Some(asbd) = fmt.stream_basic_desc() {
+                let sr = asbd.sample_rate as u32;
+                if sr > 0 {
+                    inner.actual_sample_rate.store(sr, Ordering::Release);
+                }
+            }
+        }
 
         match sample_buf.audio_buf_list_in::<1>(cm::sample_buffer::Flags(0), None, None) {
             Ok(buf_list) => {
@@ -83,9 +95,10 @@ impl sc::stream::OutputImpl for AudioHandler {
                             if should_log {
                                 let nonzero = slice.iter().filter(|&&s| s != 0.0).count();
                                 let rms: f32 = (slice.iter().map(|s| s * s).sum::<f32>() / float_count as f32).sqrt();
+                                let actual_rate = inner.actual_sample_rate.load(Ordering::Relaxed);
                                 println!(
-                                    "[SystemAudio-SCK] Callback #{}: {} samples, nonzero={}, rms={:.6}",
-                                    count, float_count, nonzero, rms
+                                    "[SystemAudio-SCK] Callback #{}: {} samples, nonzero={}, rms={:.6}, actual_rate={}",
+                                    count, float_count, nonzero, rms, actual_rate
                                 );
                             }
 
@@ -193,11 +206,14 @@ impl SpeakerInput {
         let buffer_size = 1024 * 128;
         let rb = HeapRb::<f32>::new(buffer_size);
         let (producer, consumer) = rb.split();
-        
+
         let stream = sc::Stream::new(&self.filter, &self.cfg);
-        
+
+        // Shared atomic for actual sample rate detected from CMSampleBuffer
+        let actual_sample_rate = Arc::new(AtomicU32::new(48000));
+
         // Initialize handler
-        let inner = AudioHandlerInner { producer };
+        let inner = AudioHandlerInner { producer, actual_sample_rate: actual_sample_rate.clone() };
         let handler = AudioHandler::with(inner);
         
         let queue = dispatch::Queue::serial_with_ar_pool();
@@ -250,6 +266,7 @@ impl SpeakerInput {
             _handler: handler,
             _filter: self.filter,
             _cfg: self.cfg,
+            actual_sample_rate,
         }
     }
 }
@@ -260,15 +277,20 @@ pub struct SpeakerStream {
     _handler: arc::R<AudioHandler>,
     _filter: arc::R<sc::ContentFilter>,
     _cfg: arc::R<sc::StreamCfg>,
+    actual_sample_rate: Arc<AtomicU32>,
 }
 
 impl SpeakerStream {
     pub fn sample_rate(&self) -> u32 {
-        48000
+        self.actual_sample_rate.load(Ordering::Acquire)
     }
     
     pub fn take_consumer(&mut self) -> Option<HeapCons<f32>> {
         self.consumer.take()
+    }
+
+    pub fn sample_rate_arc(&self) -> Arc<AtomicU32> {
+        self.actual_sample_rate.clone()
     }
 }
 

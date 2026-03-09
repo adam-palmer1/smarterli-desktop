@@ -1,5 +1,7 @@
 use anyhow::Result;
 use ringbuf::HeapCons;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use super::core_audio;
 use super::sck;
 
@@ -92,6 +94,13 @@ impl SpeakerStream {
         match &mut self.backend {
              BackendStream::CoreAudio(s) => s.take_consumer(),
              BackendStream::Sck(s) => s.take_consumer(),
+        }
+    }
+
+    pub fn sample_rate_arc(&self) -> Arc<AtomicU32> {
+        match &self.backend {
+            BackendStream::CoreAudio(s) => s.sample_rate_arc(),
+            BackendStream::Sck(s) => s.sample_rate_arc(),
         }
     }
 }

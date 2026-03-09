@@ -305,6 +305,10 @@ impl SpeakerStream {
     pub fn take_consumer(&mut self) -> Option<HeapCons<f32>> {
         self.consumer.take()
     }
+
+    pub fn sample_rate_arc(&self) -> Arc<AtomicU32> {
+        self.current_sample_rate.clone()
+    }
 }
 
 

@@ -101,25 +101,35 @@ impl SystemAudioCapture {
         
         let mut stream = input.stream();
         let input_sample_rate = stream.sample_rate() as f64;
+        let actual_sample_rate_arc = stream.sample_rate_arc();
         let mut consumer = stream.take_consumer()
             .ok_or_else(|| napi::Error::from_reason("Failed to get consumer"))?;
-        
+
         self.stream = Some(stream);
 
-        // DSP thread - pre-emphasis + compressor/normalizer/gate, no suppression
+        // DSP thread: compress(48k) -> sinc resample(48k->16k) -> pre-emphasis(16k) -> i16
+        // Pre-emphasis runs AFTER resampling to avoid boosting frequencies that would alias.
         self.capture_thread = Some(thread::spawn(move || {
             let mut resampler = StreamingResampler::new(input_sample_rate, 16000.0);
+            let mut last_known_rate = input_sample_rate as u32;
             let mut frame_buffer: Vec<i16> = Vec::with_capacity(FRAME_SAMPLES * 4);
             let mut raw_batch: Vec<f32> = Vec::with_capacity(4096);
             let mut pre_emphasis = pre_emphasis::PreEmphasis::new();
             let mut processor = compressor::SystemAudioProcessor::new();
 
             echo_cancel::clear_reference();
-            println!("[SystemAudioCapture] DSP thread started (pre-emphasis + compressor active, AEC ref enabled)");
+            println!("[SystemAudioCapture] DSP thread started (sinc resampler, post-resample pre-emphasis)");
 
             loop {
                 if stop_signal.load(Ordering::Relaxed) {
                     break;
+                }
+
+                // Check if actual sample rate changed (hardware may differ from configured)
+                let current_rate = actual_sample_rate_arc.load(Ordering::Acquire);
+                if current_rate != last_known_rate && current_rate > 0 {
+                    resampler.set_input_sample_rate(current_rate as f64, 16000.0);
+                    last_known_rate = current_rate;
                 }
 
                 // 1. Drain ring buffer (lock-free)
@@ -130,13 +140,19 @@ impl SystemAudioCapture {
                     }
                 }
 
-                // 2. DSP pipeline on raw f32 samples, then resample
+                // 2. Pipeline: compress at native rate, then sinc resample, then pre-emphasis at 16kHz
                 if !raw_batch.is_empty() {
-                    pre_emphasis.process(&mut raw_batch);
+                    // Compressor/normalizer/gate at native sample rate (48kHz)
                     processor.process(&mut raw_batch);
-                    let resampled = resampler.resample(&raw_batch);
-                    frame_buffer.extend(resampled);
+                    // Sinc resample to 16kHz (anti-aliased, returns f32)
+                    let mut resampled = resampler.resample(&raw_batch);
                     raw_batch.clear();
+                    // Pre-emphasis at 16kHz — boosts speech formants without aliasing risk
+                    if !resampled.is_empty() {
+                        pre_emphasis.process(&mut resampled);
+                        let i16_samples = StreamingResampler::f32_to_i16(&resampled);
+                        frame_buffer.extend(i16_samples);
+                    }
                 }
 
                 // 3. Send all frames directly (no VAD gating)
@@ -267,10 +283,10 @@ impl MicrophoneCapture {
                     }
                 }
 
-                // 2. Resample
+                // 2. Resample (sinc anti-aliased, f32 output -> i16)
                 if !raw_batch.is_empty() {
                     let resampled = resampler.resample(&raw_batch);
-                    frame_buffer.extend(resampled);
+                    frame_buffer.extend(StreamingResampler::f32_to_i16(&resampled));
                     raw_batch.clear();
                 }
 
