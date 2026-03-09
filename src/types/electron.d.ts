@@ -196,7 +196,10 @@ export interface ElectronAPI {
 
   // User Profile
   updateUserProfile: (updates: { display_name?: string }) => Promise<any>
-  getUserProfile: () => Promise<{ id: string; email: string; display_name: string | null; is_active: boolean } | null>
+  getUserProfile: () => Promise<{ id: string; email: string; display_name: string | null; is_active: boolean; enhanced?: boolean } | null>
+
+  // Replace Meeting Recording (enhanced feature)
+  replaceMeetingRecording: (meetingId: string) => Promise<{ success: boolean; cancelled?: boolean; error?: string }>
 
   // Meeting Bot
   dispatchMeetingBot: (args: {

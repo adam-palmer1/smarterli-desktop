@@ -5,6 +5,7 @@ interface PersonItem {
     id: string;
     name: string;
     email: string | null;
+    voiceprint_count: number;
 }
 
 interface VoiceprintItem {
@@ -143,6 +144,17 @@ export const VoiceprintSettings: React.FC = () => {
                                                 <div className="text-[11px] text-text-tertiary truncate">{person.email}</div>
                                             )}
                                         </div>
+                                        {person.voiceprint_count > 0 ? (
+                                            <span className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/15 text-[10px] font-medium text-green-400" title={`${person.voiceprint_count} voiceprint${person.voiceprint_count !== 1 ? 's' : ''} enrolled`}>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                                                {person.voiceprint_count}
+                                            </span>
+                                        ) : (
+                                            <span className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-bg-item-surface text-[10px] text-text-tertiary" title="No voiceprints enrolled">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-text-tertiary/40" />
+                                                0
+                                            </span>
+                                        )}
                                         <ChevronRight
                                             size={14}
                                             className={`text-text-tertiary transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`}

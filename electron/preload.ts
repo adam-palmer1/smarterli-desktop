@@ -536,6 +536,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   updateUserProfile: (updates: { display_name?: string }) => ipcRenderer.invoke('update-user-profile', updates),
   getUserProfile: () => ipcRenderer.invoke('get-user-profile'),
 
+  // Replace Meeting Recording (enhanced feature)
+  replaceMeetingRecording: (meetingId: string) => ipcRenderer.invoke('replace-meeting-recording', { meetingId }),
+
   // Generic event listener (used by LiveFeedbackPanel, etc.)
   on: (channel: string, callback: (...args: any[]) => void) => {
     const subscription = (_event: any, ...args: any[]) => callback(_event, ...args);

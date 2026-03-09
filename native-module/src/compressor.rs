@@ -102,10 +102,27 @@ impl SpeechCompressor {
 // RmsNormalizer — brings post-compression signal to -16 dBFS target
 // ============================================================================
 
+/// Soft clipper: linear below knee, tanh saturation above.
+/// Avoids the flat-top distortion of hard clamp — produces smooth saturation
+/// that sounds like tape compression rather than digital clipping.
+/// Knee at -2.5 dBFS (0.75), asymptotic ceiling at 0 dBFS (1.0).
+fn soft_clip(x: f32) -> f32 {
+    const KNEE: f32 = 0.75;
+    let abs_x = x.abs();
+    if abs_x <= KNEE {
+        x
+    } else {
+        let excess = abs_x - KNEE;
+        let compressed = KNEE + (1.0 - KNEE) * (excess / (1.0 - KNEE)).tanh();
+        x.signum() * compressed
+    }
+}
+
 /// Target RMS: -16 dBFS ≈ 0.15 linear
 const TARGET_RMS: f32 = 0.15;
-/// Maximum gain to prevent noise blowup
-const NORM_MAX_GAIN: f32 = 40.0;
+/// Maximum gain to prevent noise blowup (reduced from 40 — transients at 40x
+/// escaped the compressor and caused hard clipping, flat factor ~9.5 in recordings)
+const NORM_MAX_GAIN: f32 = 20.0;
 /// Minimum gain (slight attenuation allowed)
 const NORM_MIN_GAIN: f32 = 0.5;
 /// Smoothing coefficient: ~200ms time constant at per-sample rate
@@ -150,8 +167,8 @@ impl RmsNormalizer {
                 self.current_gain = self.current_gain.clamp(NORM_MIN_GAIN, NORM_MAX_GAIN);
             }
 
-            // Apply gain with hard clip
-            *sample = (*sample * self.current_gain).clamp(-1.0, 1.0);
+            // Apply gain with soft clip (tanh knee above 0.75, avoids flat-top distortion)
+            *sample = soft_clip(*sample * self.current_gain);
         }
     }
 }
@@ -354,6 +371,35 @@ mod tests {
         assert!(gain_above < -1.0, "Should compress above knee: {}", gain_above);
         // At threshold (middle of knee), should have some but not full compression
         assert!(gain_at_thresh <= 0.0, "Should have some compression at threshold: {}", gain_at_thresh);
+    }
+
+    // --- Soft clipper tests ---
+
+    #[test]
+    fn test_soft_clip_linear_below_knee() {
+        // Below knee (0.75), output equals input
+        for &x in &[0.0, 0.1, 0.5, 0.74, -0.3, -0.74] {
+            assert!((soft_clip(x) - x).abs() < 1e-6,
+                "soft_clip({}) should be linear, got {}", x, soft_clip(x));
+        }
+    }
+
+    #[test]
+    fn test_soft_clip_bounded() {
+        // Output never reaches ±1.0 for finite input
+        for &x in &[1.0, 2.0, 5.0, 100.0, -1.0, -10.0] {
+            assert!(soft_clip(x).abs() < 1.0,
+                "soft_clip({}) must be < 1.0, got {}", x, soft_clip(x));
+        }
+    }
+
+    #[test]
+    fn test_soft_clip_smooth_transition() {
+        // At knee boundary, output is continuous
+        let below = soft_clip(0.749);
+        let above = soft_clip(0.751);
+        assert!((above - below).abs() < 0.01,
+            "Transition should be smooth: {:.4} vs {:.4}", below, above);
     }
 
     // --- RmsNormalizer tests ---

@@ -77,6 +77,8 @@ const MeetingDetails: React.FC<MeetingDetailsProps> = ({ meeting: initialMeeting
     const [isCopied, setIsCopied] = useState(false);
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [submittedQuery, setSubmittedQuery] = useState('');
+    const [isEnhanced, setIsEnhanced] = useState(false);
+    const [isReplacingRecording, setIsReplacingRecording] = useState(false);
     const [speakers, setSpeakers] = useState<Map<string, SpeakerInfo>>(new Map());
     const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
     const [editValue, setEditValue] = useState('');
@@ -98,6 +100,34 @@ const MeetingDetails: React.FC<MeetingDetailsProps> = ({ meeting: initialMeeting
             });
         }
     }, [meeting.id]);
+
+    // Check enhanced flag
+    useEffect(() => {
+        if (window.electronAPI?.getUserProfile) {
+            window.electronAPI.getUserProfile().then((profile) => {
+                if (profile?.enhanced) setIsEnhanced(true);
+            });
+        }
+    }, []);
+
+    const handleReplaceRecording = async () => {
+        if (!meeting.id || !window.electronAPI?.replaceMeetingRecording) return;
+        setIsReplacingRecording(true);
+        try {
+            const result = await window.electronAPI.replaceMeetingRecording(meeting.id);
+            if (result.success) {
+                // Refresh meeting details
+                const updated = await window.electronAPI.getMeetingDetails(meeting.id);
+                if (updated) setMeeting(updated);
+            } else if (result.error) {
+                console.error('Replace recording failed:', result.error);
+            }
+        } catch (err) {
+            console.error('Replace recording error:', err);
+        } finally {
+            setIsReplacingRecording(false);
+        }
+    };
 
     // Focus edit input
     useEffect(() => {
@@ -408,8 +438,18 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                             />
                         </div>
 
-                        {/* Moved Actions: Follow-up & Share (REMOVED per user request) */}
-                        {/* <div className="flex items-center gap-2 mt-1"> ... </div> */}
+                        {isEnhanced && (
+                            <div className="flex items-center gap-2 mt-1 shrink-0">
+                                <button
+                                    onClick={handleReplaceRecording}
+                                    disabled={isReplacingRecording}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-tertiary hover:text-text-primary hover:bg-bg-component transition-colors disabled:opacity-50"
+                                >
+                                    <ArrowUp size={12} />
+                                    {isReplacingRecording ? 'Uploading...' : 'Replace Recording'}
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     {/* Participants */}

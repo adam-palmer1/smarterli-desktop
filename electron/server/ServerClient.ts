@@ -96,6 +96,7 @@ export interface UserInfo {
   display_name: string | null;
   is_active: boolean;
   is_admin: boolean;
+  enhanced: boolean;
   meeting_api_key: string | null;
 }
 
@@ -104,6 +105,7 @@ export interface PersonItem {
   name: string;
   email: string | null;
   notes: string | null;
+  voiceprint_count: number;
   created_at: string;
   updated_at: string | null;
 }
@@ -322,6 +324,40 @@ export class ServerClient {
       console.error(`[ServerClient] Failed to delete meeting: ${err}`);
       return false;
     }
+  }
+
+  /**
+   * Replace the audio recording for an existing meeting.
+   */
+  async replaceMeetingRecording(meetingId: string, filePath: string): Promise<boolean> {
+    const fs = require('fs');
+    const path = require('path');
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileName = path.basename(filePath);
+
+    const formData = new FormData();
+    formData.append('system_audio', new Blob([fileBuffer], { type: 'audio/wav' }), fileName);
+
+    const url = `${this.baseUrl}/meetings/${meetingId}/recording`;
+    const headers: Record<string, string> = {};
+    const authHeaders = this.getAuthHeader();
+    Object.assign(headers, authHeaders);
+
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new ServerClientError(
+        `HTTP ${response.status}: ${body?.detail || response.statusText}`,
+        response.status,
+        body,
+      );
+    }
+    return true;
   }
 
   /**

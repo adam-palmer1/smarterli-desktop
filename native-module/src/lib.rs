@@ -253,19 +253,26 @@ impl MicrophoneCapture {
             let mut resampler = StreamingResampler::new(input_sample_rate, 16000.0);
             let mut frame_buffer: Vec<i16> = Vec::with_capacity(FRAME_SAMPLES * 4);
             let mut raw_batch: Vec<f32> = Vec::with_capacity(4096);
-            
+            let mut processor = compressor::SystemAudioProcessor::new();
+
             // Use microphone config (standard threshold)
             let mut suppressor = SilenceSuppressor::new(
                 SilenceSuppressionConfig::for_microphone()
             );
 
+            // DSP constants (compressor, gate) are tuned for 48kHz. At 44.1kHz timing
+            // is ~9% off (acceptable). Warn if rate is further from expected.
+            if (input_sample_rate - 48000.0).abs() > 4000.0 {
+                println!("[MicrophoneCapture] WARNING: mic sample rate {:.0}Hz differs from DSP-tuned 48kHz — compressor timing will be scaled", input_sample_rate);
+            }
+
             // AEC: create echo canceller (falls back to passthrough if init fails)
             echo_cancel::clear_reference();
             let mut echo_canceller = echo_cancel::EchoCanceller::new();
             if echo_canceller.is_some() {
-                println!("[MicrophoneCapture] DSP thread started (suppression + AEC active)");
+                println!("[MicrophoneCapture] DSP thread started (compressor + suppression + AEC active, rate={:.0}Hz)", input_sample_rate);
             } else {
-                println!("[MicrophoneCapture] DSP thread started (suppression active, AEC unavailable)");
+                println!("[MicrophoneCapture] DSP thread started (suppression active, AEC unavailable, rate={:.0}Hz)", input_sample_rate);
             }
 
             loop {
@@ -283,8 +290,9 @@ impl MicrophoneCapture {
                     }
                 }
 
-                // 2. Resample (sinc anti-aliased, f32 output -> i16)
+                // 2. DSP pipeline: compress/normalize/gate at native rate, then sinc resample
                 if !raw_batch.is_empty() {
+                    processor.process(&mut raw_batch);
                     let resampled = resampler.resample(&raw_batch);
                     frame_buffer.extend(StreamingResampler::f32_to_i16(&resampled));
                     raw_batch.clear();
@@ -305,12 +313,14 @@ impl MicrophoneCapture {
                         FrameAction::Send(audio) => {
                              tsfn.call(audio, ThreadsafeFunctionCallMode::NonBlocking);
                         },
-                        FrameAction::SendSilence => {
+                        FrameAction::SendSilence | FrameAction::Suppress => {
+                            // Always send silence to maintain timing continuity.
+                            // Previously Suppress dropped frames entirely, causing
+                            // mic.wav to be shorter than system.wav (169s gap in
+                            // meeting 37990c58). Continuous silence frames also
+                            // improve Google STT timing alignment.
                              tsfn.call(generate_silence_frame(FRAME_SAMPLES), ThreadsafeFunctionCallMode::NonBlocking);
                         },
-                         FrameAction::Suppress => {
-                            // Do nothing
-                        }
                     }
                 }
                 

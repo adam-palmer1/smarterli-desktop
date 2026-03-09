@@ -1,6 +1,6 @@
 // ipcHandlers.ts
 
-import { app, ipcMain, shell } from "electron"
+import { app, dialog, ipcMain, shell } from "electron"
 import { AppState } from "./main"
 import * as path from "path";
 import * as fs from "fs";
@@ -432,6 +432,25 @@ export function initializeIpcHandlers(appState: AppState): void {
     const client = appState.getServerClient();
     if (!client) return false;
     return client.deleteMeeting(id);
+  });
+
+  safeHandle("replace-meeting-recording", async (_, { meetingId }: { meetingId: string }) => {
+    const client = appState.getServerClient();
+    if (!client) return { success: false, error: 'Not connected' };
+    try {
+      const result = await dialog.showOpenDialog({
+        title: 'Select audio file to replace recording',
+        filters: [{ name: 'Audio Files', extensions: ['wav'] }],
+        properties: ['openFile'],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, cancelled: true };
+      }
+      await client.replaceMeetingRecording(meetingId, result.filePaths[0]);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   });
 
   // ==========================================
