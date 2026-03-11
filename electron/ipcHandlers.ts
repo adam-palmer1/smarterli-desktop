@@ -438,7 +438,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     const client = appState.getServerClient();
     if (!client) return { success: false, error: 'Not connected' };
     try {
-      const result = await dialog.showOpenDialog({
+      const result = await (dialog.showOpenDialog as (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>)({
         title: 'Select audio file to replace recording',
         filters: [{ name: 'Audio Files', extensions: ['wav'] }],
         properties: ['openFile'],
